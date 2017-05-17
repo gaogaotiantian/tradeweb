@@ -1,0 +1,27 @@
+[Server]
+    -- Run index *
+    -- Login
+    -- Show posts
+    -- post stuff
+[AJAX]
+    -- Log in
+    -- Get posts
+    -- Post posts
+[Front End]
+    -- index
+    -- single post
+        - Title
+        - Author
+        - Accept button
+        -- Info
+    -- post page
+[Database]
+    -- Install postgres *
+    -- user table
+        - Username
+        - 
+    -- post table
+        - Title
+        - Author
+        - Content
+    -- imgs
