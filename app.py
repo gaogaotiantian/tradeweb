@@ -7,7 +7,7 @@ import functools
 
 # SQL stuff
 import sqlalchemy
-from sqlalchemy import Column, String, Integer, Text
+from sqlalchemy import Column, String, Integer, Text, Boolean, Float
 import sqlalchemy.orm as sqlorm
 from  sqlalchemy.ext.declarative import declarative_base
 import psycopg2
@@ -47,6 +47,18 @@ class PostDb(Base):
     items         = Column(Text)
     add_time      = Column(Integer)
     expire_time   = Column(Integer)
+
+class RequestDb(Base):
+    __tablename__ = "Requests"
+    id          = Column(Integer, primary_key=True)
+    reference   = Column(Integer)
+    touser      = Column(String(50))
+    fromuser    = Column(String(50))
+    order       = Column(Text)
+    totalPrice  = Column(Float)
+    isCanceled  = Column(Boolean)
+    isConfirmed = Column(Boolean)
+
 
 # create_all() needs to be after all database classes
 Base.metadata.create_all(bind=engine)
@@ -140,14 +152,14 @@ class Post:
     def Get(self, data):
         ret = []
         session = Session()
-        result = session.query(PostDb).filter(PostDb.category == data['category']).order_by(PostDb.add_time.desc()).slice(data['start'], data['end'])
+        result = session.query(PostDb).filter(PostDb.category == data['category']).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
         for row in result:
             d = row.__dict__
             temp = {}
-            temp['title'] = row['title']
-            temp['author'] = row['author']
-            temp['content'] = row['content']
-            temp['items'] = row['items']
+            temp['title'] = d['title']
+            temp['author'] = d['author']
+            temp['content'] = d['content']
+            temp['items'] = d['items']
             ret.append(temp)
         return ret
 
@@ -159,10 +171,14 @@ def require(*required_args):
         @functools.wraps(func)
         def wrapper(*args, **kw):
             if request.get_json() == None:
-                return flask.jsonify(code=400, msg="No json!")
+                resp = flask.jsonify( msg="No json!")
+                resp.status_code = 400
+                return resp
             for arg in required_args:
                 if arg not in request.get_json():
-                    return flask.jsonify(code=400, msg="wrong args! need "+arg)
+                    resp = flask.jsonify(code=400, msg="wrong args! need "+arg)
+                    resp.status_code = 400
+                    return resp
             return func(*args, **kw)
         return wrapper
     return decorator
@@ -231,7 +247,9 @@ def PutPost():
 def GetPost():
     p = Post()
     data = request.get_json()
-    return p.Get(data)
+    resp = flask.jsonify(p.Get(data))
+    resp.status_code = 200
+    return resp
 
 if __name__ == "__main__":
     app.run()
