@@ -33,7 +33,7 @@ if __name__ == '__main__':
     parser.add_argument('-p', dest="password", default="password")
     parser.add_argument('-t', dest="title", default="title")
     parser.add_argument('-content', dest="content", default="content")
-    parser.add_argument('-i', dest="items", default="{item1:1, item2:2}")
+    parser.add_argument('-i', dest="items", default={"item1":1, "item2":2})
     parser.add_argument('-c', dest="category", default="外卖")
     options = parser.parse_args()
     token = LoginEasy(url, options.username, options.password)
