@@ -1,3 +1,4 @@
+# coding=utf-8
 # python built-in libs
 import os
 import time
@@ -52,7 +53,7 @@ class PostDb(Base):
     items         = Column(Text)
     add_time      = Column(Integer)
     expire_time   = Column(Integer)
-    is_deleted    = Column(Boolean)
+    is_deleted    = Column(Boolean, default=False)
 
 class RequestDb(Base):
     __tablename__ = "Requests"
@@ -64,9 +65,9 @@ class RequestDb(Base):
     from_user_cell = Column(String(15))
     order        = Column(Text)
     total_price  = Column(Float)
-    is_canceled  = Column(Boolean)
-    is_confirmed = Column(Boolean)
-    is_finished  = Column(Boolean)
+    is_canceled  = Column(Boolean, default=False)
+    is_confirmed = Column(Boolean, default=False)
+    is_finished  = Column(Boolean, default=False)
     add_time     = Column(Integer)
     expire_time  = Column(Integer)
 
@@ -118,7 +119,7 @@ def require(*required_args, **kw_req_args):
                     u = User()
                     if not u.Exist(username, token):
                         resp = flask.jsonify(msg="This action requires login!")
-                        resp.status_code = 400
+                        resp.status_code = 401
                         return resp
                 if "postValid" in kw_req_args:
                     p = Post()
@@ -165,12 +166,28 @@ class User:
         return self.username
 
     @needSession(write = True)
-    def Register(self, username, password):
-        ret = False
+    def Register(self, data):
+        username = data['username']
+        password = data['password']
+        email    = data['email']
+        #cell     = data['cell']
+        if len(username) < 2 or len(username) > 50 or \
+                len(password) < 8 or len(password) > 50 or \
+                len(email) > 50:
+            return 400, "Invalid parameter"
+        for c in password:
+            try:
+                num = ord(c)
+                if num < 33 or num > 126:
+                    return 400, "Invalid password charactor"
+            except:
+                return 400, "Invalid password charactor"
         if self.session.query(UserDb).filter(UserDb.username == username).first() == None:
-            self.session.add(UserDb(username=username, password=hashlib.md5(password).hexdigest()))
-            ret = True
-        return ret
+            self.session.add(UserDb(username=username, 
+                    password=hashlib.md5(password).hexdigest(), 
+                    email=email))
+            return 200, "Success"
+        return 400, "Username is used"
 
     @needSession(write = True)
     def Login(self, username, password):
@@ -221,16 +238,21 @@ class Post:
         return False
     
     @needSession(write = False)
-    def Get(self, data):
+    def Get(self, data, mine = False):
         ret = []
-        result = self.session.query(PostDb).filter(PostDb.category == data['category']).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
+        if mine:
+            result = self.session.query(PostDb).filter(PostDb.author == data['username']).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
+        else:
+            result = self.session.query(PostDb).filter(PostDb.category == data['category'], PostDb.is_deleted != True).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
         for row in result:
             d = row.__dict__
             temp = {}
+            temp['id'] = d['id']
             temp['title'] = d['title']
             temp['author'] = d['author']
             temp['content'] = d['content']
             temp['items'] = json.loads(d['items'])
+            temp['is_deleted'] = d['is_deleted']
             ret.append(temp)
         return ret
 
@@ -242,7 +264,7 @@ class Post:
         postid = data["postid"]
         q = self.session.query(PostDb).filter(PostDb.id == postid, 
                 PostDb.author == author, 
-                PostDb.is_deleted == False)
+                PostDb.is_deleted != True)
         if q.first() != None:
             q.update({PostDb.is_deleted : True})
             return True
@@ -324,11 +346,11 @@ def Login():
     u = User()
     data = request.get_json()
     if u.Login(data["username"], data["password"]):
-        resp = flask.jsonify(msg="Success", token=u.token)
+        resp = flask.jsonify(msg="Success", token=u.token, username=data["username"])
         resp.status_code = 200
     else:
-        resp = flask.jsonify(msg="Fail")
-        resp.status_code = 400
+        resp = flask.jsonify(msg="用户名或密码错误！")
+        resp.status_code = 401
     return resp
 
 @app.route('/logoff', methods=['POST'])
@@ -345,16 +367,30 @@ def Logoff():
     return resp
 
 @app.route('/register', methods=['POST'])
-#@require("username", "password")
+@require("username", "password", "email")
 def Register():
     u = User()
     data = request.get_json()
-    if u.Register(data["username"], data["password"]):
-        resp = flask.jsonify(msg="Success")
+    code, msg = u.Register(data)
+    resp = flask.jsonify(msg=msg)
+    resp.status_code = code
+    return resp
+
+@app.route('/uservalid', methods=['POST'])
+@require("username")
+def ValidUser():
+    u = User()
+    data = request.get_json()
+    if "token" in data:
+        token = data["token"]
+    else:
+        token = None
+    if u.Exist(data["username"], token):
+        resp = flask.jsonify({"valid":True})
         resp.status_code = 200
     else:
-        resp = flask.jsonify(msg="Fail")
-        resp.status_code = 400
+        resp = flask.jsonify({"valid":False})
+        resp.status_code = 200
     return resp
 
 @app.route('/post', methods=['POST'])
@@ -376,6 +412,15 @@ def GetPost():
     p = Post()
     data = request.get_json()
     resp = flask.jsonify(p.Get(data))
+    resp.status_code = 200
+    return resp
+
+@app.route('/getmypost', methods=['POST'])
+@require("username", "token", "start", "end", login="username")
+def GetMyPost():
+    p = Post()
+    data = request.get_json()
+    resp = flask.jsonify(p.Get(data, mine=True))
     resp.status_code = 200
     return resp
 
