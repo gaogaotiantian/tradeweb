@@ -63,11 +63,11 @@ class RequestDb(Base):
     from_user    = Column(String(50))
     from_user_email = Column(String(50))
     from_user_cell = Column(String(15))
+    from_user_address = Column(String(100))
+    note         = Column(Text)
     order        = Column(Text)
     total_price  = Column(Float)
-    is_canceled  = Column(Boolean, default=False)
-    is_confirmed = Column(Boolean, default=False)
-    is_finished  = Column(Boolean, default=False)
+    status       = Column(String(10))
     add_time     = Column(Integer)
     expire_time  = Column(Integer)
 
@@ -174,20 +174,22 @@ class User:
         if len(username) < 2 or len(username) > 50 or \
                 len(password) < 8 or len(password) > 50 or \
                 len(email) > 50:
-            return 400, "Invalid parameter"
+            return 400, {"msg": "Invalid parameter"}
         for c in password:
             try:
                 num = ord(c)
                 if num < 33 or num > 126:
-                    return 400, "Invalid password charactor"
+                    return 400, {"msg":"Invalid password charactor"}
             except:
-                return 400, "Invalid password charactor"
+                return 400, {"msg":"Invalid password charactor"}
         if self.session.query(UserDb).filter(UserDb.username == username).first() == None:
+            self.token = base64.urlsafe_b64encode(os.urandom(24))
             self.session.add(UserDb(username=username, 
                     password=hashlib.md5(password).hexdigest(), 
-                    email=email))
-            return 200, "Success"
-        return 400, "Username is used"
+                    email=email,
+                    token=self.token))
+            return 200, {"msg":"Success", "token":self.token}
+        return 400, {"msg":"Username is used"}
 
     @needSession(write = True)
     def Login(self, username, password):
@@ -256,6 +258,10 @@ class Post:
             ret.append(temp)
         return ret
 
+    @needSession(write = False)
+    def GetByRef(self, postid):
+        return self.session.query(PostDb).filter(PostDb.id == postid).first().__dict__
+
     @needSession(write = True)
     def Delete(self, data):
         u = User()
@@ -289,50 +295,67 @@ class Request:
                 from_user = data['from_user'], 
                 from_user_email = data['from_user_email'],
                 from_user_cell = data['from_user_cell'],
+                from_user_address = data['from_user_address'],
+                note = data['note'],
                 order = json.dumps(data['order']), 
                 total_price = data['total_price'], 
-                is_canceled = False,
-                is_finished = False,
-                is_confirmed = False, 
+                status = 'ready',
                 add_time = time.time(),
                 expire_time = time.time() + 600))
         return True
 
+    @needSession(write = False)
+    def Get(self, data):
+        ret = []
+        if data['direction'] == 'toMe':
+            result = self.session.query(RequestDb).filter(RequestDb.to_user == data['username']).order_by(RequestDb.add_time.desc()).slice(int(data['start']), int(data['end']))
+        elif data['direction'] == 'fromMe':
+            result = self.session.query(RequestDb).filter(RequestDb.from_user == data['username']).order_by(RequestDb.add_time.desc()).slice(int(data['start']), int(data['end']))
+        else:
+            return []
+        for row in result:
+            d = row.__dict__
+            p = Post()
+            pData = p.GetByRef(d['reference'])
+            temp = {}
+            temp['title'] = pData['title']
+            for k in ['id', 'to_user', 'from_user', 'from_user_email', 'from_user_cell', 'from_user_address', 'order', 'total_price', 'status']:
+                temp[k] = d[k]
+            ret.append(temp)
+        return ret
+            
     @needSession(write = True)
-    def Cancel(self, data):
-        q = self.session.query(RequestDb).filter(
-                RequestDb.is_canceled == False,
-                RequestDb.is_confirmed == False,
-                RequestDb.is_finished == False,
-                RequestDb.id == data['id'])
-        if q.first() != None:
-            q.update({RequestDb.is_canceled:True})
-            return True
-        return False
+    def ChangeStatus(self, data):
+        q = self.session.query(RequestDb).filter(RequestDb.id == data['id'])
+        if q.first() == None:
+            return 400, {'msg':'Wrong request ID'}
+        result = q.first().__dict__
+        status = result['status']
+        toUser = result['to_user']
+        fromUser = result['from_user']
 
-    @needSession(write = True)
-    def Confirm(self, data):
-        q = self.session.query(RequestDb).filter(
-                RequestDb.is_canceled == False,
-                RequestDb.is_confirmed == False,
-                RequestDb.is_finished == False,
-                RequestDb.id == data['id'])
-        if q.first() != None:
-            q.update({RequestDb.is_confirmed:True})
-            return True
-        return False
+        if toUser == data['username']:
+            if status == 'ready' and data['status'] == 'confirm':
+                q.update({RequestDb.status: 'confirm'})
+            elif status == 'ready' and data['status'] == 'decline':
+                q.update({RequestDb.status: 'decline'})
+            else:
+                return 400, {"msg": "Invalid operation!"}
+        elif fromUser == data['username']:
+            if status == 'ready' and data['status'] == 'cancel':
+                q.update({RequestDb.status: 'cancel'})
+            elif status == 'confirm' and data['status'] == 'finish':
+                q.update({RequestDb.status: 'finish'})
+            elif status == 'confirm' and data['status'] == 'unfinish':
+                q.update({RequestDb.status: 'unfinish'})
+            else:
+                return 400, {"msg": "Invalid operation"}
+        else:
+            return 400, {"msg": "Invalid user!"}
 
-    @needSession(write = True)
-    def Finish(self, data):
-        q = self.session.query(RequestDb).filter(
-                RequestDb.is_canceled == False,
-                RequestDb.is_confirmed == True,
-                RequestDb.is_finished == False,
-                RequestDb.id == data['id'])
-        if q.first() != None:
-            q.update({RequestDb.is_finished:True})
-            return True
-        return False
+        return 200, {"msg": "Success"}
+
+
 # ============================================================================
 #                                 Server
 # ============================================================================
@@ -371,8 +394,8 @@ def Logoff():
 def Register():
     u = User()
     data = request.get_json()
-    code, msg = u.Register(data)
-    resp = flask.jsonify(msg=msg)
+    code, respJson = u.Register(data)
+    resp = flask.jsonify(respJson)
     resp.status_code = code
     return resp
 
@@ -438,7 +461,7 @@ def DeletePost():
     return resp
 
 @app.route('/request', methods=['POST'])
-@require('reference', 'to_user', 'from_user', 'from_user_email', 'from_user_cell', 'order', 'total_price', 'token', login="from_user", postValid = "reference")
+@require('reference', 'to_user', 'from_user', 'from_user_email', 'from_user_cell', 'from_user_address', 'note', 'order', 'total_price', 'token', login="from_user", postValid = "reference")
 def PutRequest():
     r = Request()
     data = request.get_json()
@@ -449,44 +472,25 @@ def PutRequest():
         resp = flask.jsonify({"msg":"Fail"})
         resp.status_code = 400
     return resp
+
+@app.route('/getrequest', methods=['POST'])
+@require('username', 'token', 'direction', 'start', 'end', login="username")
+def GetRequest():
+    r = Request()
+    data = request.get_json()
+    resp = flask.jsonify(r.Get(data))
+    resp.status_code = 200
+    return resp
     
-@app.route('/cancelrequest', methods=['POST'])
-@require('id', 'username', 'token', login="username", reqFrom="username")
-def CancelRequest():
+@app.route('/requeststatus', methods=['POST'])
+@require('id', 'username', 'token', 'status', login="username")
+def ChangeRequestStatus():
     r = Request()
     data = request.get_json()
-    if r.Cancel(data) == True:
-        resp = flask.jsonify({"msg":"Sucess"})
-        resp.status_code = 200
-    else:
-        resp = flask.jsonify({"msg":"Fail"})
-        resp.status_code = 400
+    status_code, msg = r.ChangeStatus(data)
+    resp = flask.jsonify(msg)
+    resp.status_code = status_code 
     return resp
 
-@app.route('/confirmrequest', methods=['POST'])
-@require('id', 'username', 'token', login="username", reqTo="username")
-def ConfirmRequest():
-    r = Request()
-    data = request.get_json()
-    if r.Confirm(data) == True:
-        resp = flask.jsonify({"msg":"Sucess"})
-        resp.status_code = 200
-    else:
-        resp = flask.jsonify({"msg":"Fail"})
-        resp.status_code = 400
-    return resp
-
-@app.route('/finishrequest', methods=['POST'])
-@require('id', 'username', 'token', login="username", reqFrom="username")
-def FinishRequest():
-    r = Request()
-    data = request.get_json()
-    if r.Finish(data) == True:
-        resp = flask.jsonify({"msg":"Sucess"})
-        resp.status_code = 200
-    else:
-        resp = flask.jsonify({"msg":"Fail"})
-        resp.status_code = 400
-    return resp
 if __name__ == "__main__":
     app.run()
