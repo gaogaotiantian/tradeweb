@@ -7,6 +7,9 @@ import hashlib
 import json
 import functools
 
+# Helper lib from pip
+import timeago
+
 # SQL stuff
 import sqlalchemy
 from sqlalchemy import Column, String, Integer, Text, Boolean, Float
@@ -270,6 +273,7 @@ class Post:
             temp['items'] = json.loads(d['items'])
             temp['availability'] = json.loads(d['availability'])
             temp['is_deleted'] = d['is_deleted']
+            temp['timeago'] = timeago.format(int(d['add_time']), locale='zh_CN')
             ret.append(temp)
         return ret
 
@@ -281,15 +285,20 @@ class Post:
         return {}
 
     @needSession(write = True)
-    def UpdateItem(self, postid, costItems):
+    def UpdateItem(self, postid, order):
         q = self.session.query(PostDb).filter(PostDb.id == postid)
         result = q.first()
         if result != None:
             avai = json.loads(result.__dict__['availability'])
-            for key in costItems:
+            for key in order:
                 if key in avai:
-                    avai[key] = int(avai[key]) - int(costItems[key])
-            q.update({"availability", json.dumps(avai)})
+                    avai[key] = int(avai[key]) - int(order[key][1])
+                    if avai[key] < 0: 
+                        return False
+            print json.dumps(avai)
+            q.update({PostDb.availability: json.dumps(avai)})
+            return True
+        return False
 
     @needSession(write = True)
     def Delete(self, data):
@@ -350,6 +359,7 @@ class Request:
             temp['title'] = pData['title']
             for k in ['id', 'to_user', 'from_user', 'from_user_email', 'from_user_cell', 'from_user_address', 'order', 'total_price', 'status']:
                 temp[k] = d[k]
+            temp['timeago'] = timeago.format(int(d['add_time']), locale='zh_CN')
             ret.append(temp)
         return ret
             
@@ -362,10 +372,16 @@ class Request:
         status = result['status']
         toUser = result['to_user']
         fromUser = result['from_user']
+        order  = json.loads(result['order'])
+        reference = result['reference']
 
         if toUser == data['username']:
             if status == 'ready' and data['status'] == 'confirm':
-                q.update({RequestDb.status: 'confirm'})
+                p = Post()
+                if p.UpdateItem(reference, order):
+                    q.update({RequestDb.status: 'confirm'})
+                else:
+                    return 400, {"msg": "Can not take this order"}
             elif status == 'ready' and data['status'] == 'decline':
                 q.update({RequestDb.status: 'decline'})
             else:
@@ -471,7 +487,6 @@ def PutPost():
 @app.route('/getpost', methods=['POST'])
 @require("category", "start", "end")
 def GetPost():
-    print "Get Post!!!!!!!!!!!!!!!!!"
     p = Post()
     data = request.get_json()
     resp = flask.jsonify(p.Get(data))
