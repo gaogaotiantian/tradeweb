@@ -29,7 +29,8 @@ CORS(app)
 loginManager = LoginManager()
 loginManager.init_app(app)
 Base = declarative_base()
-engine = sqlalchemy.create_engine("postgresql+psycopg2://gaotian:password@localhost:5432/tradeweb", echo=True)
+#engine = sqlalchemy.create_engine("postgresql+psycopg2://gaotian:password@localhost:5432/tradeweb", echo=True)
+engine = sqlalchemy.create_engine(os.environ.get('DATABASE_URL'), echo=True)
 Session = sqlorm.scoped_session(sqlorm.sessionmaker(bind=engine))
 # ============================================================================
 #                                Classes 
