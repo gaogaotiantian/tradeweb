@@ -358,7 +358,7 @@ class Request:
             pData = p.GetByRef(d['reference'])
             temp = {}
             temp['title'] = pData['title']
-            for k in ['id', 'to_user', 'from_user', 'from_user_email', 'from_user_cell', 'from_user_address', 'order', 'total_price', 'status']:
+            for k in ['id', 'to_user', 'from_user', 'from_user_email', 'from_user_cell', 'from_user_address', 'order', 'total_price', 'status', 'note']:
                 temp[k] = d[k]
             temp['timeago'] = timeago.format(int(d['add_time']), locale='zh_CN')
             ret.append(temp)
