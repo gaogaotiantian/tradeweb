@@ -51,6 +51,7 @@ class PostDb(Base):
     author        = Column(String(50))
     content       = Column(Text)
     items         = Column(Text)
+    availability  = Column(Text)
     add_time      = Column(Integer)
     expire_time   = Column(Integer)
     is_deleted    = Column(Boolean, default=False)
@@ -225,6 +226,19 @@ class User:
             ret = True
         return ret
 
+    @needSession(write = False)
+    def GetInfo(self, username, mine):
+        if mine == True:
+            q = self.session.query(UserDb).filter(UserDb.username == username)
+            result = q.first()
+            if result != None:
+                d = result.__dict__
+                return 200, {'email': d['email'], 'cell': d['cell']}
+            else:
+                return 400, {'msg': 'No such user!'}
+        else:
+            return 501, {'msg':'Not implemented yet!'}
+
 
 class Post:
     def __init__(self):
@@ -235,7 +249,7 @@ class Post:
         u = User()
         if u.Exist(data['author'], data['token']):
             self.session.add(PostDb(category = data['category'], title=data['title'], author=data['author'], 
-                    content=data['content'], items=json.dumps(data['items']), add_time=time.time(), expire_time=data['expire_time']))
+                    content=data['content'], items=json.dumps(data['items']), availability=json.dumps(data['availability']), add_time=time.time(), expire_time=data['expire_time']))
             return True
         return False
     
@@ -254,13 +268,28 @@ class Post:
             temp['author'] = d['author']
             temp['content'] = d['content']
             temp['items'] = json.loads(d['items'])
+            temp['availability'] = json.loads(d['availability'])
             temp['is_deleted'] = d['is_deleted']
             ret.append(temp)
         return ret
 
     @needSession(write = False)
     def GetByRef(self, postid):
-        return self.session.query(PostDb).filter(PostDb.id == postid).first().__dict__
+        result = self.session.query(PostDb).filter(PostDb.id == postid).first()
+        if result != None:
+            return result.__dict__
+        return {}
+
+    @needSession(write = True)
+    def UpdateItem(self, postid, costItems):
+        q = self.session.query(PostDb).filter(PostDb.id == postid)
+        result = q.first()
+        if result != None:
+            avai = json.loads(result.__dict__['availability'])
+            for key in costItems:
+                if key in avai:
+                    avai[key] = int(avai[key]) - int(costItems[key])
+            q.update({"availability", json.dumps(avai)})
 
     @needSession(write = True)
     def Delete(self, data):
@@ -416,6 +445,16 @@ def ValidUser():
         resp.status_code = 200
     return resp
 
+@app.route('/myinfo', methods=['POST'])
+@require("username", "token", login="username")
+def MyInfo():
+    u = User()
+    data = request.get_json()
+    code, respJson = u.GetInfo(data['username'], mine = True)
+    resp = flask.jsonify(respJson)
+    resp.status_code = code
+    return resp
+
 @app.route('/post', methods=['POST'])
 @require("category", "title", "author", "content", "items", "expire_time", "token", login="author")
 def PutPost():
@@ -432,6 +471,7 @@ def PutPost():
 @app.route('/getpost', methods=['POST'])
 @require("category", "start", "end")
 def GetPost():
+    print "Get Post!!!!!!!!!!!!!!!!!"
     p = Post()
     data = request.get_json()
     resp = flask.jsonify(p.Get(data))
@@ -465,7 +505,10 @@ def DeletePost():
 def PutRequest():
     r = Request()
     data = request.get_json()
-    if r.Submit(data) == True:
+    if data['to_user'] == data['from_user']:
+        resp = flask.jsonify({"msg":"不能给自己下订单！"})
+        resp.status_code = 400
+    elif r.Submit(data) == True:
         resp = flask.jsonify({"msg":"Sucess"})
         resp.status_code = 200
     else:
