@@ -29,8 +29,10 @@ CORS(app)
 loginManager = LoginManager()
 loginManager.init_app(app)
 Base = declarative_base()
-#engine = sqlalchemy.create_engine("postgresql+psycopg2://gaotian:password@localhost:5432/tradeweb", echo=True)
-engine = sqlalchemy.create_engine(os.environ.get('DATABASE_URL'), echo=True)
+if os.environ.get('DATABASE_URL') != None:
+    engine = sqlalchemy.create_engine(os.environ.get('DATABASE_URL'), echo=True)
+else:
+    engine = sqlalchemy.create_engine("postgresql+psycopg2://gaotian:password@localhost:5432/tradeweb", echo=True)
 Session = sqlorm.scoped_session(sqlorm.sessionmaker(bind=engine))
 # ============================================================================
 #                                Classes 
@@ -40,12 +42,20 @@ Session = sqlorm.scoped_session(sqlorm.sessionmaker(bind=engine))
 # --------------------------------
 class UserDb(Base):
     __tablename__ = 'Users'
-    username    = Column(String(50), primary_key=True)
-    password    = Column(String(32))
-    token       = Column(String(32))
-    email       = Column(String(50))
-    cell        = Column(String(15))
-    expire_time = Column(Integer)
+    username      = Column(String(50), primary_key=True)
+    password      = Column(String(32))
+    token         = Column(String(32))
+    email         = Column(String(50))
+    cell          = Column(String(15), default="")
+    address       = Column(String(100), default="")
+    good_sell     = Column(Integer, default=0)
+    good_purchase = Column(Integer, default=0)
+    bad_sell      = Column(Integer, default=0)
+    bad_purchase  = Column(Integer, default=0)
+    grades        = Column(Integer, default=0)
+    cards         = Column(Text, default="")
+    expire_time   = Column(Integer, default=0)
+    update_time   = Column(Integer, default=0)
     
 class PostDb(Base):
     __tablename__ = "Posts"
@@ -55,9 +65,11 @@ class PostDb(Base):
     author        = Column(String(50))
     content       = Column(Text)
     items         = Column(Text)
-    availability  = Column(Text)
+    availability  = Column(Text, default="")
+    buff          = Column(Text, default="")
     add_time      = Column(Integer)
     expire_time   = Column(Integer)
+    update_time   = Column(Integer, default="")
     is_deleted    = Column(Boolean, default=False)
 
 class RequestDb(Base):
@@ -69,11 +81,12 @@ class RequestDb(Base):
     from_user_email = Column(String(50))
     from_user_cell = Column(String(15))
     from_user_address = Column(String(100))
-    note         = Column(Text)
+    note         = Column(Text, default="")
     order        = Column(Text)
     total_price  = Column(Float)
     status       = Column(String(10))
     add_time     = Column(Integer)
+    update_time   = Column(Integer)
     expire_time  = Column(Integer)
 
 
@@ -175,7 +188,6 @@ class User:
         username = data['username']
         password = data['password']
         email    = data['email']
-        #cell     = data['cell']
         if len(username) < 2 or len(username) > 50 or \
                 len(password) < 8 or len(password) > 50 or \
                 len(email) > 50:
@@ -190,8 +202,8 @@ class User:
         if self.session.query(UserDb).filter(UserDb.username == username).first() == None:
             self.token = base64.urlsafe_b64encode(os.urandom(24))
             self.session.add(UserDb(username=username, 
-                    password=hashlib.md5(password).hexdigest(), 
-                    email=email,
+                    password = hashlib.md5(password).hexdigest(), 
+                    email    = email,
                     token=self.token))
             return 200, {"msg":"Success", "token":self.token}
         return 400, {"msg":"Username is used"}
@@ -237,11 +249,39 @@ class User:
             result = q.first()
             if result != None:
                 d = result.__dict__
-                return 200, {'email': d['email'], 'cell': d['cell']}
+                data = {}
+                for key in ['email', 'cell', 'address', 'good_sell', 'bad_sell', \
+                        'good_purchase', 'bad_purchase', 'grades', 'cards']:
+                    data[key] = d[key]
+                return 200, data
             else:
                 return 400, {'msg': 'No such user!'}
         else:
             return 501, {'msg':'Not implemented yet!'}
+
+    @needSession(write = True)
+    def ChangePassword(self, data):
+        q = self.session.query(UserDb).filter(UserDb.username == data['username'], 
+                UserDb.password == hashlib.md5(data['old_password']).hexdigest())
+        result = q.first()
+        if result != None:
+            q.update({"password": hashlib.md5(data['new_password']).hexdigest()})
+            return 200, {"msg":"Success!"}
+        else:
+            return 400, {"msg":"Wrong user/password combination!"}
+
+    @needSession(write = True)
+    def UpdateInfo(self, data):
+        q = self.session.query(UserDb).filter(UserDb.username == data['username'])
+        if q.first() != None:
+            q.update({
+                "email": data["email"],
+                "cell": data["cell"],
+                "address": data["address"]
+            })
+            return 200, {"msg": "Success!"}
+        return 400, {"msg": "No such user!"}
+
 
 
 class Post:
@@ -468,6 +508,26 @@ def MyInfo():
     u = User()
     data = request.get_json()
     code, respJson = u.GetInfo(data['username'], mine = True)
+    resp = flask.jsonify(respJson)
+    resp.status_code = code
+    return resp
+
+@app.route('/changepassword', methods=['POST'])
+@require("username", "old_password", "new_password")
+def ChangePassword():
+    u = User()
+    data = request.get_json()
+    code, respJson = u.ChangePassword(data)
+    resp = flask.jsonify(respJson)
+    resp.status_code = code
+    return resp
+
+@app.route('/updateinfo', methods=['POST'])
+@require("username", "token", "email", "cell", "address", login="username")
+def UpdateInfo():
+    u = User()
+    data = request.get_json()
+    code, respJson = u.UpdateInfo(data)
     resp = flask.jsonify(respJson)
     resp.status_code = code
     return resp
