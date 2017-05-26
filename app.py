@@ -30,10 +30,19 @@ loginManager = LoginManager()
 loginManager.init_app(app)
 Base = declarative_base()
 if os.environ.get('DATABASE_URL') != None:
-    engine = sqlalchemy.create_engine(os.environ.get('DATABASE_URL'), echo=True)
+    engine = sqlalchemy.create_engine(os.environ.get('DATABASE_URL'), echo=False)
 else:
-    engine = sqlalchemy.create_engine("postgresql+psycopg2://gaotian:password@localhost:5432/tradeweb", echo=True)
+    engine = sqlalchemy.create_engine("postgresql+psycopg2://gaotian:password@localhost:5432/tradeweb", echo=False)
 Session = sqlorm.scoped_session(sqlorm.sessionmaker(bind=engine))
+# ============================================================================
+#                         Table-like Data
+# ============================================================================
+cardList = {
+    u"小队长卡":{"price":1},
+    u"中队长卡":{"price":1},
+    u"大队长卡":{"price":1}
+}
+
 # ============================================================================
 #                                Classes 
 # ============================================================================
@@ -53,6 +62,7 @@ class UserDb(Base):
     bad_sell      = Column(Integer, default=0)
     bad_purchase  = Column(Integer, default=0)
     grades        = Column(Integer, default=0)
+    level         = Column(Integer, default=0)
     cards         = Column(Text, default="")
     expire_time   = Column(Integer, default=0)
     update_time   = Column(Integer, default=0)
@@ -134,8 +144,8 @@ def require(*required_args, **kw_req_args):
                     assert('token' in required_args)
                     username = data[kw_req_args["login"]]
                     token = data['token']
-                    u = User()
-                    if not u.Exist(username, token):
+                    u = User(username = username, token = token)
+                    if not u.valid:
                         resp = flask.jsonify(msg="This action requires login!")
                         resp.status_code = 401
                         return resp
@@ -145,34 +155,61 @@ def require(*required_args, **kw_req_args):
                         resp = flask.jsonify(msg="The reference post is not valid")
                         resp.status.code = 400
                         return resp
-                if "reqFrom" in kw_req_args:
-                    assert('id' in required_args)
-                    r = Request()
-                    if not r.ReqFrom(data['id'], data[kw_req_args["reqFrom"]]):
-                        resp = flask.jsonify(msg="Request not from "+kw_req_args["reqFrom"])
-                        resp.status_code = 400
-                        return resp
-                if "reqTo" in kw_req_args:
-                    assert('id' in required_args)
-                    r = Request()
-                    if not r.ReqTo(data['id'], data[kw_req_args["reqTo"]]):
-                        resp = flask.jsonify(msg="Request not to "+kw_req_args["reqTo"])
-                        resp.status_code = 400
-                        return resp
             return func(*args, **kw)
         return wrapper
     return decorator
-
 # --------------------------------
 #     Flask Classes
 # --------------------------------
 class User:
-    def __init__(self, username = ""):
-        self.authenticated = False
+    def __init__(self, username = "", password = None, token = None):
+        self.session = None
         self.username = username
+        if username != "":
+            self.LoadData(username)
+        else:
+            self.data = None
+        self.valid = self.IsValid(password, token)
+        self.authenticated = False
         self.password = ""
         self.token = ""
-        self.session = None
+
+    def __getitem__(self, key):
+        if self.data == None:
+            return None
+        return self.data[key]
+
+    @needSession(write = True)
+    def Set(self, **kw_args):
+        d = {}
+        q = self.session.query(UserDb).filter(UserDb.username == self.username) 
+        if q.first() != None:
+            q.update(kw_args)
+    
+    def IsValid(self, password, token):
+        if self.data == None:
+            return False
+        else:
+            if password == None and token == None:
+                return True
+            elif token != None:
+                return token == self.data['token']
+            elif password != None:
+                return hashlib.md5(password).hexdigest() == self.data['password']
+            assert(False)
+
+
+    @needSession(write = False)
+    def LoadData(self, username):
+        q = self.session.query(UserDb).filter(UserDb.username == username)
+        if q.first() == None:
+            self.data = None
+        else:
+            self.data = q.first().__dict__
+            if int(self.data['level']) == 0:
+                self.data['post_gap'] = 600
+            else:
+                self.data['post_gap'] = 3000
 
     def is_authenticated(self):
         return self.authenticated
@@ -209,102 +246,110 @@ class User:
         return 400, {"msg":"Username is used"}
 
     @needSession(write = True)
-    def Login(self, username, password):
-        ret = False
-        q = self.session.query(UserDb).filter(UserDb.username == username, UserDb.password == hashlib.md5(password).hexdigest())
-        if q.first() != None:
+    def Login(self, remember):
+        if self.valid:
             self.token = base64.urlsafe_b64encode(os.urandom(24))
-            q.update({UserDb.token:self.token, UserDb.expire_time:time.time()+600})
-            self.username = username
-            self.authenticated = True
-            ret = True
-        return ret
+            if remember:
+                self.Set(token=self.token, expire_time=time.time()+3600*24*30)
+            else:
+                self.Set(token=self.token, expire_time=time.time()+3600)
+            return 200, {"msg" : "Success!", "username": self.username, "token": self.token}
+        return 400, {"msg": "用户名或密码错误！"}
     
     @needSession(write = True)
-    def Logoff(self, username, token):
-        ret = False
-        q = self.session.query(UserDb).filter(UserDb.username == username, UserDb.token == token)
-        if q.first() != None:
-            q.update({UserDb.token:"", UserDb.expire_time:0})
-            self.username = username
-            self.authenticated = False
-            ret = True
-        return ret
+    def Logoff(self):
+        if self.valid:
+            self.Set(token = "", expire_time = 0)
+            return 200, {"msg": "Success"}
+        return 400, {"msg": "登出失败！"}
     
     @needSession(write = False)
-    def Exist(self, username, token = None):
-        ret = False
-        if token != None:
-            q = self.session.query(UserDb).filter(UserDb.username == username, UserDb.token == token)
+    def Exist(self, username, token = None, password = None):
+        if self.data == None or self.data['username'] != username:
+            if token != None:
+                q = self.session.query(UserDb).filter(UserDb.username == username, UserDb.token == token, UserDb.expire_time > time.time())
+            else:
+                q = self.session.query(UserDb).filter(UserDb.username == username)
+            if q.first() != None:
+                return True
+            return False
         else:
-            q = self.session.query(UserDb).filter(UserDb.username == username)
-        if q.first() != None:
-            ret = True
-        return ret
+            return self.data['token'] == token and self.data['expire_time'] > time.time()
 
     @needSession(write = False)
-    def GetInfo(self, username, mine):
-        q = self.session.query(UserDb).filter(UserDb.username == username)
-        result = q.first()
-        if result != None:
-            d = result.__dict__
-            data = {}
+    def GetInfo(self, mine):
+        if self.valid:
+            d = {}
             if mine == True:
                 for key in ['email', 'cell', 'address', 'good_sell', 'bad_sell', \
-                        'good_purchase', 'bad_purchase', 'grades', 'cards']:
-                    data[key] = d[key]
-                return 200, data
+                        'good_purchase', 'bad_purchase', 'grades', 'cards', 'level']:
+                    d[key] = self.data[key]
+                return 200, d
             else:
-                for key in ['good_sell', 'bad_sell', 'good_purchase', 'bad_purchase', 'grades']:
-                    data[key] = d[key]
-                return 200, data
+                for key in ['good_sell', 'bad_sell', 'good_purchase', 'bad_purchase', 'grades', 'level']:
+                    d[key] = self.data[key]
+                return 200, d
         else:
             return 400, {'msg': 'No such user!'}
 
     @needSession(write = True)
     def ChangePassword(self, data):
-        q = self.session.query(UserDb).filter(UserDb.username == data['username'], 
-                UserDb.password == hashlib.md5(data['old_password']).hexdigest())
-        result = q.first()
-        if result != None:
-            q.update({"password": hashlib.md5(data['new_password']).hexdigest()})
-            return 200, {"msg":"Success!"}
-        else:
-            return 400, {"msg":"Wrong user/password combination!"}
+        if self.valid:
+            if hashlib.md5(data['old_password']).hexdigest() == self.data['password']:
+                self.Set(password = hashlib.md5(data['new_password']).hexdigest())
+                return 200, {"msg":"Success!"}
+            else:
+                return 400, {"msg":"Wrong user/password combination!"}
 
     @needSession(write = True)
     def UpdateInfo(self, data):
-        q = self.session.query(UserDb).filter(UserDb.username == data['username'])
-        if q.first() != None:
-            q.update({
-                "email": data["email"],
-                "cell": data["cell"],
-                "address": data["address"]
-            })
+        print self.username
+        print self.valid
+        print self.data
+        if self.valid:
+            self.Set(email = data['email'], cell = data['cell'], address = data['address'])
             return 200, {"msg": "Success!"}
         return 400, {"msg": "No such user!"}
 
     @needSession(write = True)
-    def DoTransaction(self, username, trans, success):
-        print "Transaction !!!!!!!!!!!!!!" + "*"*50
-        q = self.session.query(UserDb).filter(UserDb.username == username)
-        if q.first() != None:
-            print username, trans, success
+    def DoTransaction(self, trans, success):
+        if self.valid:
             if trans == "sell":
                 if success:
-                    q.update({"good_sell": UserDb.good_sell + 1})
+                    self.Set(good_sell = UserDb.good_sell + 1)
+                    self.Set(grades = UserDb.grades + 1)
                 else:
-                    q.update({"bad_sell": UserDb.bad_sell + 1})
+                    self.Set(bad_sell = UserDb.bad_sell + 1)
             elif trans == "purchase":
                 if success:
-                    q.update({"good_purchase": UserDb.good_purchase + 1})
+                    self.Set(good_purchase = UserDb.good_purchase + 1)
+                    self.Set(grades = UserDb.grades + 1)
                 else:
-                    q.update({"bad_purchase": UserDb.bad_purchase + 1})
+                    self.Set(bad_purchase = UserDb.bad_purchase + 1)
             else:
                 return False
             return True
         return False
 
+    @needSession(write = True)
+    def PurchaseCard(self, cardname):
+        if self.valid:
+            if cardname in cardList:
+                g = self.data['grades'] - cardList[cardname]["price"] 
+                if g < 0:
+                    return 400, "学分不够！"
+                else:
+                    c = json.loads(self.data['cards'])
+                    if cardname in c:
+                        c[cardname] += 1
+                    else:
+                        c[cardname] = 1
+                    self.Set(cards = json.dumps(c, sort_keys=True), grades = g)
+                    return 200, "Success!"
+            else:
+                return 400, "没有这种卡！"
+        else:
+            return 401, "需要先登录再操作！"
 
 
 class Post:
@@ -313,12 +358,22 @@ class Post:
 
     @needSession(write = True)
     def Submit(self, data):
-        u = User()
-        if u.Exist(data['author'], data['token']):
-            self.session.add(PostDb(category = data['category'], title=data['title'], author=data['author'], 
-                    content=data['content'], items=json.dumps(data['items']), availability=json.dumps(data['availability']), add_time=time.time(), expire_time=data['expire_time']))
-            return True
-        return False
+        u = User(username = data['author'], token = data['token'])
+        if u.valid:
+            q = self.session.query(PostDb).filter(PostDb.author == data['author']).order_by(PostDb.add_time.desc())
+            if q.first() == None or q.first().__dict__['add_time'] < time.time() - u['post_gap']:
+                self.session.add(PostDb(category = data['category'], 
+                        title=data['title'], 
+                        author=data['author'], 
+                        content=data['content'], 
+                        items=json.dumps(data['items']), 
+                        availability=json.dumps(data['availability']), 
+                        add_time=time.time(), 
+                        expire_time=data['expire_time']))
+                return 200, {"msg": "Success!"}
+            else:
+                return 400, {"msg": "您的用户发帖间隔为{}秒, 您还需要等待{}秒".format(u['post_gap'], int(u['post_gap'] - (time.time() - q.first().__dict__['add_time'])))}
+        return 400, {"msg": "用户失效！"}
     
     @needSession(write = False)
     def Get(self, data, mine = False):
@@ -359,14 +414,12 @@ class Post:
                     avai[key] = int(avai[key]) - int(order[key][1])
                     if avai[key] < 0: 
                         return False
-            print json.dumps(avai)
             q.update({PostDb.availability: json.dumps(avai)})
             return True
         return False
 
     @needSession(write = True)
     def Delete(self, data):
-        u = User()
         author = data["username"]
         token  = data["token"]
         postid = data["postid"]
@@ -448,23 +501,23 @@ class Request:
                     return 400, {"msg": "Can not take this order"}
             elif status == 'ready' and data['status'] == 'decline':
                 q.update({RequestDb.status: 'decline'})
-                u = User()
             else:
                 return 400, {"msg": "Invalid operation!"}
         elif fromUser == data['username']:
             if status == 'ready' and data['status'] == 'cancel':
                 q.update({RequestDb.status: 'cancel'})
-                u = User()
-                u.DoTransaction(fromUser, trans="purchase", success=False)
+                u = User(fromUser)
+                u.DoTransaction(trans="purchase", success=False)
             elif status == 'confirm' and data['status'] == 'finish':
                 q.update({RequestDb.status: 'finish'})
-                u = User()
-                u.DoTransaction(fromUser, trans="purchase", success=True)
-                u.DoTransaction(toUser, trans="sell", success=True)
+                u = User(fromUser)
+                u.DoTransaction(trans="purchase", success=True)
+                u = User(toUser)
+                u.DoTransaction(trans="sell", success=True)
             elif status == 'confirm' and data['status'] == 'unfinish':
                 q.update({RequestDb.status: 'unfinish'})
-                u = User()
-                u.DoTransaction(toUser, trans="sell", success=False)
+                u = User(toUser)
+                u.DoTransaction(trans="sell", success=False)
             else:
                 return 400, {"msg": "Invalid operation"}
         else:
@@ -476,56 +529,50 @@ class Request:
 # ============================================================================
 #                                 Server
 # ============================================================================
+
+# ----------------------------------
+# ------ Utility Function ----------
+# ----------------------------------
+def GetResp(t):
+    resp = flask.jsonify(t[1])
+    resp.status_code = t[0]
+    return resp
+
 @app.route("/")
 def index():
     return render_template("index.html")
 
 @app.route('/login', methods=['POST'])
-@require("username", "password")
+@require("username", "password", "remember")
 def Login():
-    u = User()
     data = request.get_json()
-    if u.Login(data["username"], data["password"]):
-        resp = flask.jsonify(msg="Success", token=u.token, username=data["username"])
-        resp.status_code = 200
-    else:
-        resp = flask.jsonify(msg="用户名或密码错误！")
-        resp.status_code = 401
-    return resp
+    u = User(username = data['username'], password = data['password'])
+    return GetResp(u.Login(data["remember"]))
 
 @app.route('/logoff', methods=['POST'])
 @require("username", "token")
 def Logoff():
-    u = User()
     data = request.get_json()
-    if u.Logoff(data["username"], data["token"]):
-        resp = flask.jsonify(msg="Sucess")
-        resp.status_code = 200
-    else:
-        resp = flask.jsonify(msg="Fail")
-        resp.status_code = 400
-    return resp
+    u = User(username = data['username'], token = data['token'])
+    return GetResp(u.Logoff())
 
 @app.route('/register', methods=['POST'])
 @require("username", "password", "email")
 def Register():
-    u = User()
     data = request.get_json()
-    code, respJson = u.Register(data)
-    resp = flask.jsonify(respJson)
-    resp.status_code = code
-    return resp
+    u = User(data['username'])
+    return GetResp(u.Register(data))
 
 @app.route('/uservalid', methods=['POST'])
 @require("username")
 def ValidUser():
-    u = User()
     data = request.get_json()
     if "token" in data:
         token = data["token"]
     else:
         token = None
-    if u.Exist(data["username"], token):
+    u = User(username = data['username'], token = token)
+    if u.valid:
         resp = flask.jsonify({"valid":True})
         resp.status_code = 200
     else:
@@ -536,19 +583,16 @@ def ValidUser():
 @app.route('/myinfo', methods=['POST'])
 @require("username", "token", login="username")
 def MyInfo():
-    u = User()
     data = request.get_json()
-    code, respJson = u.GetInfo(data['username'], mine = True)
-    resp = flask.jsonify(respJson)
-    resp.status_code = code
-    return resp
+    u = User(username = data['username'], token = data["token"])
+    return GetResp(u.GetInfo(mine = True))
 
 @app.route('/userinfo', methods=['POST'])
 @require("username")
 def UserInfo():
-    u = User()
     data = request.get_json()
-    code, respJson = u.GetInfo(data['username'], mine = False)
+    u = User(username = data['username'])
+    code, respJson = u.GetInfo(mine = False)
     resp = flask.jsonify(respJson)
     resp.status_code = code
     return resp
@@ -556,35 +600,30 @@ def UserInfo():
 @app.route('/changepassword', methods=['POST'])
 @require("username", "old_password", "new_password")
 def ChangePassword():
-    u = User()
     data = request.get_json()
-    code, respJson = u.ChangePassword(data)
-    resp = flask.jsonify(respJson)
-    resp.status_code = code
-    return resp
+    u = User(data["username"])
+    return GetResp(u.ChangePassword(data))
 
 @app.route('/updateinfo', methods=['POST'])
-@require("username", "token", "email", "cell", "address", login="username")
+@require("username", "token", "email", "cell", "address")
 def UpdateInfo():
-    u = User()
     data = request.get_json()
-    code, respJson = u.UpdateInfo(data)
-    resp = flask.jsonify(respJson)
-    resp.status_code = code
-    return resp
+    u = User(data["username"], token = data["token"])
+    return GetResp(u.UpdateInfo(data))
+
+@app.route('/purchasecard', methods=['POST'])
+@require("username", "token", "cardname")
+def PurchaseCard():
+    data = request.get_json()
+    u = User(data["username"], token = data["token"])
+    return GetResp(u.PurchaseCard(data["cardname"]))
 
 @app.route('/post', methods=['POST'])
 @require("category", "title", "author", "content", "items", "expire_time", "token", login="author")
 def PutPost():
     p = Post()
     data = request.get_json()
-    if p.Submit(data):
-        resp = flask.jsonify(msg="Success")
-        resp.status_code = 200
-    else:
-        resp = flask.jsonify(msg="Fail")
-        resp.status_code = 400
-    return resp
+    return GetResp(p.Submit(data))
 
 @app.route('/getpost', methods=['POST'])
 @require("category", "start", "end")
