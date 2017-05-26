@@ -69,7 +69,7 @@ class PostDb(Base):
     buff          = Column(Text, default="")
     add_time      = Column(Integer)
     expire_time   = Column(Integer)
-    update_time   = Column(Integer, default="")
+    update_time   = Column(Integer, default=0)
     is_deleted    = Column(Boolean, default=False)
 
 class RequestDb(Base):
@@ -244,20 +244,22 @@ class User:
 
     @needSession(write = False)
     def GetInfo(self, username, mine):
-        if mine == True:
-            q = self.session.query(UserDb).filter(UserDb.username == username)
-            result = q.first()
-            if result != None:
-                d = result.__dict__
-                data = {}
+        q = self.session.query(UserDb).filter(UserDb.username == username)
+        result = q.first()
+        if result != None:
+            d = result.__dict__
+            data = {}
+            if mine == True:
                 for key in ['email', 'cell', 'address', 'good_sell', 'bad_sell', \
                         'good_purchase', 'bad_purchase', 'grades', 'cards']:
                     data[key] = d[key]
                 return 200, data
             else:
-                return 400, {'msg': 'No such user!'}
+                for key in ['good_sell', 'bad_sell', 'good_purchase', 'bad_purchase', 'grades']:
+                    data[key] = d[key]
+                return 200, data
         else:
-            return 501, {'msg':'Not implemented yet!'}
+            return 400, {'msg': 'No such user!'}
 
     @needSession(write = True)
     def ChangePassword(self, data):
@@ -281,6 +283,27 @@ class User:
             })
             return 200, {"msg": "Success!"}
         return 400, {"msg": "No such user!"}
+
+    @needSession(write = True)
+    def DoTransaction(self, username, trans, success):
+        print "Transaction !!!!!!!!!!!!!!" + "*"*50
+        q = self.session.query(UserDb).filter(UserDb.username == username)
+        if q.first() != None:
+            print username, trans, success
+            if trans == "sell":
+                if success:
+                    q.update({"good_sell": UserDb.good_sell + 1})
+                else:
+                    q.update({"bad_sell": UserDb.bad_sell + 1})
+            elif trans == "purchase":
+                if success:
+                    q.update({"good_purchase": UserDb.good_purchase + 1})
+                else:
+                    q.update({"bad_purchase": UserDb.bad_purchase + 1})
+            else:
+                return False
+            return True
+        return False
 
 
 
@@ -425,15 +448,23 @@ class Request:
                     return 400, {"msg": "Can not take this order"}
             elif status == 'ready' and data['status'] == 'decline':
                 q.update({RequestDb.status: 'decline'})
+                u = User()
             else:
                 return 400, {"msg": "Invalid operation!"}
         elif fromUser == data['username']:
             if status == 'ready' and data['status'] == 'cancel':
                 q.update({RequestDb.status: 'cancel'})
+                u = User()
+                u.DoTransaction(fromUser, trans="purchase", success=False)
             elif status == 'confirm' and data['status'] == 'finish':
                 q.update({RequestDb.status: 'finish'})
+                u = User()
+                u.DoTransaction(fromUser, trans="purchase", success=True)
+                u.DoTransaction(toUser, trans="sell", success=True)
             elif status == 'confirm' and data['status'] == 'unfinish':
                 q.update({RequestDb.status: 'unfinish'})
+                u = User()
+                u.DoTransaction(toUser, trans="sell", success=False)
             else:
                 return 400, {"msg": "Invalid operation"}
         else:
@@ -508,6 +539,16 @@ def MyInfo():
     u = User()
     data = request.get_json()
     code, respJson = u.GetInfo(data['username'], mine = True)
+    resp = flask.jsonify(respJson)
+    resp.status_code = code
+    return resp
+
+@app.route('/userinfo', methods=['POST'])
+@require("username")
+def UserInfo():
+    u = User()
+    data = request.get_json()
+    code, respJson = u.GetInfo(data['username'], mine = False)
     resp = flask.jsonify(respJson)
     resp.status_code = code
     return resp
