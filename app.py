@@ -30,9 +30,9 @@ loginManager = LoginManager()
 loginManager.init_app(app)
 Base = declarative_base()
 if os.environ.get('DATABASE_URL') != None:
-    engine = sqlalchemy.create_engine(os.environ.get('DATABASE_URL'), echo=False)
+    engine = sqlalchemy.create_engine(os.environ.get('DATABASE_URL'), echo=True)
 else:
-    engine = sqlalchemy.create_engine("postgresql+psycopg2://gaotian:password@localhost:5432/tradeweb", echo=False)
+    engine = sqlalchemy.create_engine("postgresql+psycopg2://gaotian:password@localhost:5432/tradeweb", echo=True)
 Session = sqlorm.scoped_session(sqlorm.sessionmaker(bind=engine))
 # ============================================================================
 #                         Table-like Data
@@ -357,30 +357,31 @@ class User:
     def UseCard(self, cardname):
         if self.valid:
             if cardname not in cardData:
-                return 400, "没有这种卡！"
+                return 400, {"msg":"没有这种卡！"}
             else:
                 if cardname in self['cards'] and self['cards'][cardname] > 0:
-                    if cardname == '小队长卡':
+                    if cardname == u'小队长卡':
                         if self['level'] < 1:
                             self.Set(level = 1, level_exp_time = time.time() + 30*24*3600)
                         else:
-                            return 400, "您现在的等级无需使用这张卡。"
-                    elif cardname == '中队长卡':
+                            return 400, {"msg":"您现在的等级无需使用这张卡。"}
+                    elif cardname == u'中队长卡':
                         if self['level'] < 2:
                             self.Set(level = 2, level_exp_time = time.time() + 30*24*3600)
                         else:
-                            return 400, "您现在的等级无需使用这张卡。"
-                    elif cardname == '大队长卡':
+                            return 400, {"msg":"您现在的等级无需使用这张卡。"}
+                    elif cardname == u'大队长卡':
                         if self['level'] < 3:
                             self.Set(level = 3, level_exp_time = time.time() + 30*24*3600)
                         else:
-                            return 400, "您现在的等级无需使用这张卡。"
+                            return 400, {"msg":"您现在的等级无需使用这张卡。"}
                     self['cards'][cardname] -= 1
                     self.Set(cards = self['cards'])
+                    return 200, {"msg":"Success"}
                 else:
-                    return 400, "卡的数量不够"
+                    return 400, {"msg":"卡的数量不够"}
         else:
-            return 401, "需要先登录再操作！"
+            return 401, {"msg":"需要先登录再操作！"}
 
 
 
@@ -660,6 +661,13 @@ def PurchaseCard():
     data = request.get_json()
     u = User(data["username"], token = data["token"])
     return GetResp(u.PurchaseCard(data["cardname"]))
+
+@app.route('/usecard', methods=['POST'])
+@require("username", "token", "cardname")
+def UseCard():
+    data = request.get_json()
+    u = User(data["username"], token = data["token"])
+    return GetResp(u.UseCard(data["cardname"]))
 
 @app.route('/post', methods=['POST'])
 @require("category", "title", "author", "content", "items", "expire_time", "token", login="author")
