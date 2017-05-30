@@ -37,11 +37,13 @@ Session = sqlorm.scoped_session(sqlorm.sessionmaker(bind=engine))
 # ============================================================================
 #                         Table-like Data
 # ============================================================================
-cardList = {
-    u"小队长卡":{"price":1},
-    u"中队长卡":{"price":1},
-    u"大队长卡":{"price":1}
-}
+cardList = [
+    [u"小队长卡", 1, "变成小队长，有效期30天。"],
+    [u"中队长卡", 1, "变成中队长，有效期30天。"],
+    [u"大队长卡", 1, "变成大队长，有效期30天。"]
+]
+
+cardData = {card[0]:{"price":card[1], "description":card[2]} for card in cardList}
 
 # ============================================================================
 #                                Classes 
@@ -50,22 +52,23 @@ cardList = {
 #     Database Classes
 # --------------------------------
 class UserDb(Base):
-    __tablename__ = 'Users'
-    username      = Column(String(50), primary_key=True)
-    password      = Column(String(32))
-    token         = Column(String(32))
-    email         = Column(String(50))
-    cell          = Column(String(15), default="")
-    address       = Column(String(100), default="")
-    good_sell     = Column(Integer, default=0)
-    good_purchase = Column(Integer, default=0)
-    bad_sell      = Column(Integer, default=0)
-    bad_purchase  = Column(Integer, default=0)
-    grades        = Column(Integer, default=0)
-    level         = Column(Integer, default=0)
-    cards         = Column(Text, default="")
-    expire_time   = Column(Integer, default=0)
-    update_time   = Column(Integer, default=0)
+    __tablename__   = 'Users'
+    username        = Column(String(50), primary_key=True)
+    password        = Column(String(32))
+    token           = Column(String(32))
+    email           = Column(String(50))
+    cell            = Column(String(15), default="")
+    address         = Column(String(100), default="")
+    good_sell       = Column(Integer, default=0)
+    good_purchase   = Column(Integer, default=0)
+    bad_sell        = Column(Integer, default=0)
+    bad_purchase    = Column(Integer, default=0)
+    grades          = Column(Integer, default=0)
+    level           = Column(Integer, default=0)
+    level_exp_time  = Column(Integer, default=0)
+    cards           = Column(Text, default="{}")
+    expire_time     = Column(Integer, default=0)
+    update_time     = Column(Integer, default=0)
     
 class PostDb(Base):
     __tablename__ = "Posts"
@@ -74,9 +77,9 @@ class PostDb(Base):
     title         = Column(String(50))
     author        = Column(String(50))
     content       = Column(Text)
-    items         = Column(Text)
-    availability  = Column(Text, default="")
-    buff          = Column(Text, default="")
+    items         = Column(Text, default="{}")
+    availability  = Column(Text, default="{}")
+    buff          = Column(Text, default="{}")
     add_time      = Column(Integer)
     expire_time   = Column(Integer)
     update_time   = Column(Integer, default=0)
@@ -92,7 +95,7 @@ class RequestDb(Base):
     from_user_cell = Column(String(15))
     from_user_address = Column(String(100))
     note         = Column(Text, default="")
-    order        = Column(Text)
+    order        = Column(Text, default="{}")
     total_price  = Column(Float)
     status       = Column(String(10))
     add_time     = Column(Integer)
@@ -182,6 +185,8 @@ class User:
     @needSession(write = True)
     def Set(self, **kw_args):
         d = {}
+        if 'cards' in kw_args:
+            kw_args['cards'] = json.dumps(kw_args['cards'], sort_keys = True)
         q = self.session.query(UserDb).filter(UserDb.username == self.username) 
         if q.first() != None:
             q.update(kw_args)
@@ -206,6 +211,7 @@ class User:
             self.data = None
         else:
             self.data = q.first().__dict__
+            self.data['cards'] = json.loads(self.data['cards'])
             if int(self.data['level']) == 0:
                 self.data['post_gap'] = 600
             else:
@@ -303,9 +309,6 @@ class User:
 
     @needSession(write = True)
     def UpdateInfo(self, data):
-        print self.username
-        print self.valid
-        print self.data
         if self.valid:
             self.Set(email = data['email'], cell = data['cell'], address = data['address'])
             return 200, {"msg": "Success!"}
@@ -334,22 +337,51 @@ class User:
     @needSession(write = True)
     def PurchaseCard(self, cardname):
         if self.valid:
-            if cardname in cardList:
-                g = self.data['grades'] - cardList[cardname]["price"] 
+            if cardname not in cardData:
+                return 400, "没有这种卡！"
+            else:
+                g = self.data['grades'] - cardData[cardname]["price"] 
                 if g < 0:
                     return 400, "学分不够！"
                 else:
-                    c = json.loads(self.data['cards'])
-                    if cardname in c:
-                        c[cardname] += 1
+                    if cardname in self['cards']:
+                        self['cards'][cardname] += 1
                     else:
-                        c[cardname] = 1
-                    self.Set(cards = json.dumps(c, sort_keys=True), grades = g)
+                        self['cards'][cardname] = 1
+                    self.Set(cards = self['cards'], grades = g)
                     return 200, "Success!"
-            else:
-                return 400, "没有这种卡！"
         else:
             return 401, "需要先登录再操作！"
+
+    @needSession(write = True)
+    def UseCard(self, cardname):
+        if self.valid:
+            if cardname not in cardData:
+                return 400, "没有这种卡！"
+            else:
+                if cardname in self['cards'] and self['cards'][cardname] > 0:
+                    if cardname == '小队长卡':
+                        if self['level'] < 1:
+                            self.Set(level = 1, level_exp_time = time.time() + 30*24*3600)
+                        else:
+                            return 400, "您现在的等级无需使用这张卡。"
+                    elif cardname == '中队长卡':
+                        if self['level'] < 2:
+                            self.Set(level = 2, level_exp_time = time.time() + 30*24*3600)
+                        else:
+                            return 400, "您现在的等级无需使用这张卡。"
+                    elif cardname == '大队长卡':
+                        if self['level'] < 3:
+                            self.Set(level = 3, level_exp_time = time.time() + 30*24*3600)
+                        else:
+                            return 400, "您现在的等级无需使用这张卡。"
+                    self['cards'][cardname] -= 1
+                    self.Set(cards = self['cards'])
+                else:
+                    return 400, "卡的数量不够"
+        else:
+            return 401, "需要先登录再操作！"
+
 
 
 class Post:
@@ -372,7 +404,7 @@ class Post:
                         expire_time=data['expire_time']))
                 return 200, {"msg": "Success!"}
             else:
-                return 400, {"msg": "您的用户发帖间隔为{}秒, 您还需要等待{}秒".format(u['post_gap'], int(u['post_gap'] - (time.time() - q.first().__dict__['add_time'])))}
+                return 400, {"msg": "您的用户级别发帖间隔为{}秒, 您还需要等待{}秒".format(u['post_gap'], int(u['post_gap'] - (time.time() - q.first().__dict__['add_time'])))}
         return 400, {"msg": "用户失效！"}
     
     @needSession(write = False)
@@ -475,7 +507,10 @@ class Request:
             temp = {}
             temp['title'] = pData['title']
             for k in ['id', 'to_user', 'from_user', 'from_user_email', 'from_user_cell', 'from_user_address', 'order', 'total_price', 'status', 'note']:
-                temp[k] = d[k]
+                if k == 'order':
+                    temp[k] = json.loads(d[k])
+                else:
+                    temp[k] = d[k]
             temp['timeago'] = timeago.format(int(d['add_time']), locale='zh_CN')
             ret.append(temp)
         return ret
@@ -537,7 +572,9 @@ def GetResp(t):
     resp = flask.jsonify(t[1])
     resp.status_code = t[0]
     return resp
-
+# ----------------------------------
+#              API 
+# ----------------------------------
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -610,6 +647,12 @@ def UpdateInfo():
     data = request.get_json()
     u = User(data["username"], token = data["token"])
     return GetResp(u.UpdateInfo(data))
+
+@app.route('/getcardlist', methods=['POST'])
+def GetCardList():
+    resp = flask.jsonify(cardList)
+    resp.status_code = 200
+    return resp
 
 @app.route('/purchasecard', methods=['POST'])
 @require("username", "token", "cardname")
