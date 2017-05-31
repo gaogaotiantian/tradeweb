@@ -4,7 +4,7 @@ import argparse
 
 def LoginEasy(url, un, pw):
     headers = {'Content-Type' : 'application/json'}
-    data = {'username':un, 'password':pw}
+    data = {'username':un, 'password':pw, "remember":False}
     r = requests.post(url = url + "/login", headers = headers, data=json.dumps(data))
     print r.status_code
     print r.json()

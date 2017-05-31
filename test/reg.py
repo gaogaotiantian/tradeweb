@@ -4,9 +4,11 @@ import argparse
 
 def RegisterEasy(url, un, pw):
     headers = {'Content-Type' : 'application/json'}
-    data = {'username':un, 'password':pw}
+    data = {'username':un, 'password':pw, "email":"aa@example.com"}
     r = requests.post(url = url + "/register", headers = headers, data=json.dumps(data))
-    print r
+    print r.status_code
+    print r.json()
+
 
 if __name__ == '__main__':
     url = "http://localhost:8000/"
