@@ -33,9 +33,13 @@ db = SQLAlchemy(app)
 #                         Table-like Data
 # ============================================================================
 cardList = [
-    [u"小队长卡", 1, "变成小队长，有效期30天。"],
-    [u"中队长卡", 1, "变成中队长，有效期30天。"],
-    [u"大队长卡", 1, "变成大队长，有效期30天。"]
+    [u"小队长卡", 1, "变成小队长，发帖间隔6小时，学分收益加倍，每帖最多5项，有效期30天。"],
+    [u"中队长卡", 1, "变成中队长，发帖间隔3小时，学分收益三倍，每帖最多8项，有效期30天。"],
+    [u"大队长卡", 1, "变成大队长，发帖间隔1小时，学分收益四倍，每帖最多12项，有效期30天。"],
+    [u"加粗卡",   1, "把帖子标题加粗！"],
+    [u"变红卡",   1, "把帖子标题变红！"],
+    [u"变绿卡",   1, "把帖子标题变绿！"],
+    [u"变蓝卡",   1, "把帖子标题变蓝！"]
 ]
 
 cardData = {card[0]:{"price":card[1], "description":card[2]} for card in cardList}
@@ -159,7 +163,18 @@ class User:
         if key == "cards":
             return json.loads(self.data.__getattribute__(key))
         elif key == 'post_gap':
-            return 600
+            if self.data.level == 0:
+                return 24*3600
+            elif self.data.level == 1:
+                return 6*3600
+            elif self.data.level == 2:
+                return 3*3600
+            elif self.data.level == 3:
+                return 1*3600
+        elif key == 'pending_requests':
+            num  = RequestDb.query.filter_by(from_user = self['username'], status = 'confirm').count()
+            num += RequestDb.query.filter_by(to_user = self['username'], status = 'ready').count()
+            return num
         return self.data.__getattribute__(key)
 
     def __setitem__(self, key, val):
@@ -232,7 +247,8 @@ class User:
             d = {}
             if mine == True:
                 for key in ['email', 'cell', 'address', 'good_sell', 'bad_sell', \
-                        'good_purchase', 'bad_purchase', 'grades', 'cards', 'level', 'level_exp_time']:
+                        'good_purchase', 'bad_purchase', 'grades', 'cards', 'level', \
+                        'level_exp_time', 'pending_requests']:
                     if key == 'level_exp_time':
                         d[key] = int(self[key] - time.time())
                     else:
@@ -272,13 +288,13 @@ class User:
             if trans == "sell":
                 if success:
                     self.data.good_sell = self.data.good_sell + 1
-                    self.data.grades = self.data.grades + 1
+                    self.data.grades = self.data.grades + self.data.level
                 else:
                     self.data.bad_sell = self.data.bad_sell + 1
             elif trans == "purchase":
                 if success:
                     self.data.good_purchase = self.data.good_purchase + 1
-                    self.data.grades = self.data.grades + 1
+                    self.data.grades = self.data.grades + self.data.level
                 else:
                     self.data.bad_purchase = self.data.bad_purchase + 1
             else:
@@ -307,7 +323,7 @@ class User:
         else:
             return 401, "需要先登录再操作！"
 
-    def UseCard(self, cardname):
+    def UseCard(self, cardname, target):
         if self.valid:
             if cardname not in cardData:
                 return 400, {"msg":"没有这种卡！"}
@@ -332,6 +348,24 @@ class User:
                             self['level_exp_time'] = time.time() + 30*24*3600
                         else:
                             return 400, {"msg":"您现在的等级无需使用这张卡。"}
+                    elif cardname == u'加粗卡':
+                        p = Post(target['postid'])
+                        if p.AddBuff("bold", True) == False:
+                            return 400, {"msg":"Fail"}
+                    elif cardname == u'变红卡':
+                        p = Post(target['postid'])
+                        if p.AddBuff("color", "red") == False:
+                            return 400, {"msg":"Fail"}
+                    elif cardname == u'变绿卡':
+                        p = Post(target['postid'])
+                        if p.AddBuff("color", "green") == False:
+                            return 400, {"msg":"Fail"}
+                    elif cardname == u'变蓝卡':
+                        p = Post(target['postid'])
+                        if p.AddBuff("color", "blue") == False:
+                            return 400, {"msg":"Fail"}
+                    else:
+                        return 400, {"msg":"Not implemented yet!"}
                     cards[cardname] -= 1
                     if cards[cardname] == 0:
                         cards.pop(cardname, None)
@@ -346,8 +380,11 @@ class User:
 
 
 class Post:
-    def __init__(self):
-        self.session = None
+    def __init__(self, postid = None):
+        if postid != None:
+            self.data = PostDb.query.get(postid)
+        else:
+            self.data = None
 
     def Submit(self, data):
         u = User(username = data['author'], token = data['token'])
@@ -378,13 +415,11 @@ class Post:
         for row in result:
             d = row.__dict__
             temp = {}
-            temp['id'] = d['id']
-            temp['title'] = d['title']
-            temp['author'] = d['author']
-            temp['content'] = d['content']
+            for key in ['id', 'title', 'author', 'content', 'is_deleted']:
+                temp[key] = d[key]
             temp['items'] = json.loads(d['items'])
             temp['availability'] = json.loads(d['availability'])
-            temp['is_deleted'] = d['is_deleted']
+            temp['buff'] = json.loads(d['buff'])
             temp['timeago'] = timeago.format(int(d['add_time']), locale='zh_CN')
             ret.append(temp)
         return ret
@@ -401,6 +436,8 @@ class Post:
             avai = json.loads(q.__dict__['availability'])
             for key in order:
                 if key in avai:
+                    print avai
+                    print avai[key], order[key][1]
                     avai[key] = int(avai[key]) - int(order[key][1])
                     if avai[key] < 0: 
                         return False
@@ -427,6 +464,15 @@ class Post:
         if q.first() != None:
             return True
         return False
+
+    def AddBuff(self, buff, val):
+        if self.data == None:
+            return False
+        totalBuff = json.loads(self.data.buff)
+        totalBuff[buff] = val
+        self.data.buff = json.dumps(totalBuff)
+        db.session.commit()
+        return True
 
 class Request:
     def Submit(self, data):
@@ -614,11 +660,11 @@ def PurchaseCard():
     return GetResp(u.PurchaseCard(data["cardname"]))
 
 @app.route('/usecard', methods=['POST'])
-@require("username", "token", "cardname")
+@require("username", "token", "cardname", "target")
 def UseCard():
     data = request.get_json()
     u = User(data["username"], token = data["token"])
-    return GetResp(u.UseCard(data["cardname"]))
+    return GetResp(u.UseCard(data["cardname"], data["target"]))
 
 @app.route('/post', methods=['POST'])
 @require("category", "title", "author", "content", "items", "expire_time", "token", login="author")
