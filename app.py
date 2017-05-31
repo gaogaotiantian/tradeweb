@@ -11,10 +11,6 @@ import functools
 import timeago
 
 # SQL stuff
-import sqlalchemy
-from sqlalchemy import Column, String, Integer, Text, Boolean, Float
-import sqlalchemy.orm as sqlorm
-from  sqlalchemy.ext.declarative import declarative_base
 import psycopg2
 
 # Flask
@@ -22,18 +18,17 @@ import flask
 from flask import Flask, request, render_template
 from flask_login import LoginManager
 from flask_cors import CORS
+from flask_sqlalchemy import SQLAlchemy
 
 # Initialization
-app = Flask(__name__)
-CORS(app)
-loginManager = LoginManager()
-loginManager.init_app(app)
-Base = declarative_base()
 if os.environ.get('DATABASE_URL') != None:
-    engine = sqlalchemy.create_engine(os.environ.get('DATABASE_URL'), echo=True)
+    DATABASE_URL = os.environ.get('DATABASE_URL')
 else:
-    engine = sqlalchemy.create_engine("postgresql+psycopg2://gaotian:password@localhost:5432/tradeweb", echo=True)
-Session = sqlorm.scoped_session(sqlorm.sessionmaker(bind=engine))
+    DATABASE_URL = "postgresql+psycopg2://gaotian:password@localhost:5432/tradeweb"
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+CORS(app)
+db = SQLAlchemy(app)
 # ============================================================================
 #                         Table-like Data
 # ============================================================================
@@ -51,82 +46,64 @@ cardData = {card[0]:{"price":card[1], "description":card[2]} for card in cardLis
 # --------------------------------
 #     Database Classes
 # --------------------------------
-class UserDb(Base):
+class UserDb(db.Model):
     __tablename__   = 'Users'
-    username        = Column(String(50), primary_key=True)
-    password        = Column(String(32))
-    token           = Column(String(32))
-    email           = Column(String(50))
-    cell            = Column(String(15), default="")
-    address         = Column(String(100), default="")
-    good_sell       = Column(Integer, default=0)
-    good_purchase   = Column(Integer, default=0)
-    bad_sell        = Column(Integer, default=0)
-    bad_purchase    = Column(Integer, default=0)
-    grades          = Column(Integer, default=0)
-    level           = Column(Integer, default=0)
-    level_exp_time  = Column(Integer, default=0)
-    cards           = Column(Text, default="{}")
-    expire_time     = Column(Integer, default=0)
-    update_time     = Column(Integer, default=0)
+    username        = db.Column(db.String(50), primary_key=True)
+    password        = db.Column(db.String(32))
+    token           = db.Column(db.String(32))
+    email           = db.Column(db.String(50))
+    cell            = db.Column(db.String(15), default="")
+    address         = db.Column(db.String(100), default="")
+    good_sell       = db.Column(db.Integer, default=0)
+    good_purchase   = db.Column(db.Integer, default=0)
+    bad_sell        = db.Column(db.Integer, default=0)
+    bad_purchase    = db.Column(db.Integer, default=0)
+    grades          = db.Column(db.Integer, default=0)
+    level           = db.Column(db.Integer, default=0)
+    level_exp_time  = db.Column(db.Integer, default=0)
+    cards           = db.Column(db.Text, default="{}")
+    expire_time     = db.Column(db.Integer, default=0)
+    update_time     = db.Column(db.Integer, default=0)
     
-class PostDb(Base):
+class PostDb(db.Model):
     __tablename__ = "Posts"
-    id            = Column(Integer, primary_key=True)
-    category      = Column(String(20))
-    title         = Column(String(50))
-    author        = Column(String(50))
-    content       = Column(Text)
-    items         = Column(Text, default="{}")
-    availability  = Column(Text, default="{}")
-    buff          = Column(Text, default="{}")
-    add_time      = Column(Integer)
-    expire_time   = Column(Integer)
-    update_time   = Column(Integer, default=0)
-    is_deleted    = Column(Boolean, default=False)
+    id            = db.Column(db.Integer, primary_key=True)
+    category      = db.Column(db.String(20))
+    title         = db.Column(db.String(50))
+    author        = db.Column(db.String(50))
+    content       = db.Column(db.Text)
+    items         = db.Column(db.Text, default="{}")
+    availability  = db.Column(db.Text, default="{}")
+    buff          = db.Column(db.Text, default="{}")
+    add_time      = db.Column(db.Integer)
+    expire_time   = db.Column(db.Integer)
+    update_time   = db.Column(db.Integer, default=0)
+    is_deleted    = db.Column(db.Boolean, default=False)
 
-class RequestDb(Base):
+class RequestDb(db.Model):
     __tablename__ = "Requests"
-    id           = Column(Integer, primary_key=True)
-    reference    = Column(Integer)
-    to_user      = Column(String(50))
-    from_user    = Column(String(50))
-    from_user_email = Column(String(50))
-    from_user_cell = Column(String(15))
-    from_user_address = Column(String(100))
-    note         = Column(Text, default="")
-    order        = Column(Text, default="{}")
-    total_price  = Column(Float)
-    status       = Column(String(10))
-    add_time     = Column(Integer)
-    update_time   = Column(Integer)
-    expire_time  = Column(Integer)
+    id                = db.Column(db.Integer, primary_key=True)
+    reference         = db.Column(db.Integer)
+    to_user           = db.Column(db.String(50))
+    from_user         = db.Column(db.String(50))
+    from_user_email   = db.Column(db.String(50))
+    from_user_cell    = db.Column(db.String(15))
+    from_user_address = db.Column(db.String(100))
+    note              = db.Column(db.Text, default="")
+    order             = db.Column(db.Text, default="{}")
+    total_price       = db.Column(db.Float)
+    status            = db.Column(db.String(10))
+    add_time          = db.Column(db.Integer)
+    update_time       = db.Column(db.Integer)
+    expire_time       = db.Column(db.Integer)
 
 
 # create_all() needs to be after all database classes
-Base.metadata.create_all(bind=engine)
+db.create_all()
 
 # ============================================================================
 #                                 Decoreator
 # ============================================================================
-def needSession(write = False):
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(self, *args, **kwargs):
-            if self.session == None:
-                self.session = Session()
-                createSession = True
-            else:
-                createSession = False
-            res = func(self, *args, **kwargs)
-            if write == True:
-                self.session.commit()
-            if createSession:
-                self.session.close()
-                self.session = None
-            return res
-        return wrapper
-    return decorator
 
 def require(*required_args, **kw_req_args):
     def decorator(func):
@@ -166,10 +143,9 @@ def require(*required_args, **kw_req_args):
 # --------------------------------
 class User:
     def __init__(self, username = "", password = None, token = None):
-        self.session = None
         self.username = username
         if username != "":
-            self.LoadData(username)
+            self.data = UserDb.query.filter_by(username = username).first()
         else:
             self.data = None
         self.valid = self.IsValid(password, token)
@@ -180,16 +156,17 @@ class User:
     def __getitem__(self, key):
         if self.data == None:
             return None
-        return self.data[key]
+        if key == "cards":
+            return json.loads(self.data.__getattribute__(key))
+        elif key == 'post_gap':
+            return 600
+        return self.data.__getattribute__(key)
 
-    @needSession(write = True)
-    def Set(self, **kw_args):
-        d = {}
-        if 'cards' in kw_args:
-            kw_args['cards'] = json.dumps(kw_args['cards'], sort_keys = True)
-        q = self.session.query(UserDb).filter(UserDb.username == self.username) 
-        if q.first() != None:
-            q.update(kw_args)
+    def __setitem__(self, key, val):
+        if key == "cards":
+            self.data.cards = json.dumps(val, sort_keys = True)
+        else:
+            self.data.__setattr__(key, val)
     
     def IsValid(self, password, token):
         if self.data == None:
@@ -198,35 +175,11 @@ class User:
             if password == None and token == None:
                 return True
             elif token != None:
-                return token == self.data['token']
+                return token == self.data.token and self.data.expire_time > time.time()
             elif password != None:
-                return hashlib.md5(password).hexdigest() == self.data['password']
+                return hashlib.md5(password).hexdigest() == self.data.password
             assert(False)
 
-
-    @needSession(write = False)
-    def LoadData(self, username):
-        q = self.session.query(UserDb).filter(UserDb.username == username)
-        if q.first() == None:
-            self.data = None
-        else:
-            self.data = q.first().__dict__
-            self.data['cards'] = json.loads(self.data['cards'])
-            if int(self.data['level']) == 0:
-                self.data['post_gap'] = 600
-            else:
-                self.data['post_gap'] = 3000
-
-    def is_authenticated(self):
-        return self.authenticated
-    def is_active(self):
-        return True
-    def isanonymous(self):
-        return True
-    def get_id(self):
-        return self.username
-
-    @needSession(write = True)
     def Register(self, data):
         username = data['username']
         password = data['password']
@@ -242,141 +195,141 @@ class User:
                     return 400, {"msg":"Invalid password charactor"}
             except:
                 return 400, {"msg":"Invalid password charactor"}
-        if self.session.query(UserDb).filter(UserDb.username == username).first() == None:
-            self.token = base64.urlsafe_b64encode(os.urandom(24))
-            self.session.add(UserDb(username=username, 
-                    password = hashlib.md5(password).hexdigest(), 
-                    email    = email,
-                    token=self.token))
-            return 200, {"msg":"Success", "token":self.token}
-        return 400, {"msg":"Username is used"}
+        if UserDb.query.filter_by(username = username).first() == None:
+            token = base64.urlsafe_b64encode(os.urandom(24))
+            newUser = UserDb(username = username, 
+                    password = hashlib.md5(password).hexdigest(),
+                    token = token,
+                    email = email)
+            db.session.add(newUser)
+            db.session.commit()
+            return 200, {"msg":"Success", "token":token}
+        return 400, {"msg":"用户名已被占用"}
 
-    @needSession(write = True)
     def Login(self, remember):
         if self.valid:
-            self.token = base64.urlsafe_b64encode(os.urandom(24))
+            token = base64.urlsafe_b64encode(os.urandom(24))
             if remember:
-                self.Set(token=self.token, expire_time=time.time()+3600*24*30)
+                self.data.token = token
+                self.data.expire_time = time.time() + 3600*24*30
             else:
-                self.Set(token=self.token, expire_time=time.time()+3600)
-            return 200, {"msg" : "Success!", "username": self.username, "token": self.token}
+                self.data.token = token
+                self.data.expire_time = time.time() + 3600
+            db.session.commit()
+            return 200, {"msg" : "Success!", "username": self.data.username, "token": token}
         return 400, {"msg": "用户名或密码错误！"}
     
-    @needSession(write = True)
     def Logoff(self):
         if self.valid:
-            self.Set(token = "", expire_time = 0)
+            self.data.token = ""
+            self.data.expire_time = 0
+            db.session.commit()
             return 200, {"msg": "Success"}
         return 400, {"msg": "登出失败！"}
     
-    @needSession(write = False)
-    def Exist(self, username, token = None, password = None):
-        if self.data == None or self.data['username'] != username:
-            if token != None:
-                q = self.session.query(UserDb).filter(UserDb.username == username, UserDb.token == token, UserDb.expire_time > time.time())
-            else:
-                q = self.session.query(UserDb).filter(UserDb.username == username)
-            if q.first() != None:
-                return True
-            return False
-        else:
-            return self.data['token'] == token and self.data['expire_time'] > time.time()
-
-    @needSession(write = False)
     def GetInfo(self, mine):
         if self.valid:
             d = {}
             if mine == True:
                 for key in ['email', 'cell', 'address', 'good_sell', 'bad_sell', \
                         'good_purchase', 'bad_purchase', 'grades', 'cards', 'level']:
-                    d[key] = self.data[key]
+                    d[key] = self[key]
                 return 200, d
             else:
                 for key in ['good_sell', 'bad_sell', 'good_purchase', 'bad_purchase', 'grades', 'level']:
-                    d[key] = self.data[key]
+                    d[key] = self[key]
                 return 200, d
         else:
             return 400, {'msg': 'No such user!'}
 
-    @needSession(write = True)
     def ChangePassword(self, data):
         if self.valid:
-            if hashlib.md5(data['old_password']).hexdigest() == self.data['password']:
-                self.Set(password = hashlib.md5(data['new_password']).hexdigest())
+            if hashlib.md5(data['old_password']).hexdigest() == self.data.password:
+                self.data.password = hashlib.md5(data['new_password']).hexdigest()
+                db.session.commit()
                 return 200, {"msg":"Success!"}
             else:
                 return 400, {"msg":"Wrong user/password combination!"}
 
-    @needSession(write = True)
     def UpdateInfo(self, data):
         if self.valid:
-            self.Set(email = data['email'], cell = data['cell'], address = data['address'])
+            self.data.email = data['email']
+            self.data.cell = data['cell']
+            self.data.address = data['address']
+            db.session.commit()
             return 200, {"msg": "Success!"}
         return 400, {"msg": "No such user!"}
 
-    @needSession(write = True)
     def DoTransaction(self, trans, success):
         if self.valid:
             if trans == "sell":
                 if success:
-                    self.Set(good_sell = UserDb.good_sell + 1)
-                    self.Set(grades = UserDb.grades + 1)
+                    self.data.good_sell = self.data.good_sell + 1
+                    self.data.grades = self.data.grades + 1
                 else:
-                    self.Set(bad_sell = UserDb.bad_sell + 1)
+                    self.data.bad_sell = self.data.bad_sell + 1
             elif trans == "purchase":
                 if success:
-                    self.Set(good_purchase = UserDb.good_purchase + 1)
-                    self.Set(grades = UserDb.grades + 1)
+                    self.data.good_purchase = self.data.good_purchase + 1
+                    self.data.grades = self.data.grades + 1
                 else:
-                    self.Set(bad_purchase = UserDb.bad_purchase + 1)
+                    self.data.bad_purchase = self.data.bad_purchase + 1
             else:
                 return False
             return True
         return False
 
-    @needSession(write = True)
     def PurchaseCard(self, cardname):
         if self.valid:
             if cardname not in cardData:
                 return 400, "没有这种卡！"
             else:
-                g = self.data['grades'] - cardData[cardname]["price"] 
-                if g < 0:
+                g = self.data.grades - cardData[cardname]["price"] 
+                if self.data.grades < cardData[cardname]['price']:
                     return 400, "学分不够！"
                 else:
-                    if cardname in self['cards']:
-                        self['cards'][cardname] += 1
+                    cards = self['cards']
+                    if cardname in cards:
+                        cards[cardname] += 1
+                        print cards
                     else:
-                        self['cards'][cardname] = 1
-                    self.Set(cards = self['cards'], grades = g)
+                        cards[cardname] = 1
+                    self['cards'] = cards
+                    db.session.commit()
                     return 200, "Success!"
         else:
             return 401, "需要先登录再操作！"
 
-    @needSession(write = True)
     def UseCard(self, cardname):
         if self.valid:
             if cardname not in cardData:
                 return 400, {"msg":"没有这种卡！"}
             else:
-                if cardname in self['cards'] and self['cards'][cardname] > 0:
+                cards = self['cards']
+                if cardname in cards and cards[cardname] > 0:
                     if cardname == u'小队长卡':
-                        if self['level'] < 1:
-                            self.Set(level = 1, level_exp_time = time.time() + 30*24*3600)
+                        if self['level'] < 2:
+                            self['level'] = 2
+                            self['level_exp_time'] = time.time() + 30*24*3600
                         else:
                             return 400, {"msg":"您现在的等级无需使用这张卡。"}
                     elif cardname == u'中队长卡':
-                        if self['level'] < 2:
-                            self.Set(level = 2, level_exp_time = time.time() + 30*24*3600)
+                        if self['level'] < 3:
+                            self['level'] = 3
+                            self['level_exp_time'] = time.time() + 30*24*3600
                         else:
                             return 400, {"msg":"您现在的等级无需使用这张卡。"}
                     elif cardname == u'大队长卡':
-                        if self['level'] < 3:
-                            self.Set(level = 3, level_exp_time = time.time() + 30*24*3600)
+                        if self['level'] < 4:
+                            self['level'] = 4
+                            self['level_exp_time'] = time.time() + 30*24*3600
                         else:
                             return 400, {"msg":"您现在的等级无需使用这张卡。"}
-                    self['cards'][cardname] -= 1
-                    self.Set(cards = self['cards'])
+                    cards[cardname] -= 1
+                    if cards[cardname] == 0:
+                        cards.pop(cardname, None)
+                    self['cards'] = cards
+                    db.session.commit()
                     return 200, {"msg":"Success"}
                 else:
                     return 400, {"msg":"卡的数量不够"}
@@ -389,32 +342,32 @@ class Post:
     def __init__(self):
         self.session = None
 
-    @needSession(write = True)
     def Submit(self, data):
         u = User(username = data['author'], token = data['token'])
         if u.valid:
-            q = self.session.query(PostDb).filter(PostDb.author == data['author']).order_by(PostDb.add_time.desc())
+            q = PostDb.query.filter_by(author = data['author']).order_by(PostDb.add_time.desc())
             if q.first() == None or q.first().__dict__['add_time'] < time.time() - u['post_gap']:
-                self.session.add(PostDb(category = data['category'], 
+                p = PostDb(category = data['category'], 
                         title=data['title'], 
                         author=data['author'], 
                         content=data['content'], 
                         items=json.dumps(data['items']), 
                         availability=json.dumps(data['availability']), 
                         add_time=time.time(), 
-                        expire_time=data['expire_time']))
+                        expire_time=data['expire_time'])
+                db.session.add(p)
+                db.session.commit()
                 return 200, {"msg": "Success!"}
             else:
                 return 400, {"msg": "您的用户级别发帖间隔为{}秒, 您还需要等待{}秒".format(u['post_gap'], int(u['post_gap'] - (time.time() - q.first().__dict__['add_time'])))}
         return 400, {"msg": "用户失效！"}
     
-    @needSession(write = False)
     def Get(self, data, mine = False):
         ret = []
         if mine:
-            result = self.session.query(PostDb).filter(PostDb.author == data['username']).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
+            result = PostDb.query.filter_by(author = data['username']).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
         else:
-            result = self.session.query(PostDb).filter(PostDb.category == data['category'], PostDb.is_deleted != True).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
+            result = PostDb.query.filter_by(category = data['category'], is_deleted = False).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
         for row in result:
             d = row.__dict__
             temp = {}
@@ -429,55 +382,48 @@ class Post:
             ret.append(temp)
         return ret
 
-    @needSession(write = False)
     def GetByRef(self, postid):
-        result = self.session.query(PostDb).filter(PostDb.id == postid).first()
+        result = PostDb.query.get(postid)
         if result != None:
             return result.__dict__
         return {}
 
-    @needSession(write = True)
     def UpdateItem(self, postid, order):
-        q = self.session.query(PostDb).filter(PostDb.id == postid)
-        result = q.first()
-        if result != None:
-            avai = json.loads(result.__dict__['availability'])
+        q = PostDb.query.get(postid)
+        if q != None:
+            avai = json.loads(q.__dict__['availability'])
             for key in order:
                 if key in avai:
                     avai[key] = int(avai[key]) - int(order[key][1])
                     if avai[key] < 0: 
                         return False
-            q.update({PostDb.availability: json.dumps(avai)})
+            q.availability = json.dumps(avai)
+            db.session.commit()
             return True
         return False
 
-    @needSession(write = True)
     def Delete(self, data):
         author = data["username"]
         token  = data["token"]
         postid = data["postid"]
-        q = self.session.query(PostDb).filter(PostDb.id == postid, 
-                PostDb.author == author, 
-                PostDb.is_deleted != True)
+        q = PostDb.query.filter_by(id = postid, 
+                author = author, 
+                is_deleted = False)
         if q.first() != None:
-            q.update({PostDb.is_deleted : True})
+            q.first().is_deleted = True
+            db.session.commit()
             return True
         return False
     
-    @needSession(write = False)
     def Exist(self, id):
-        q = self.session.query(PostDb).filter(PostDb.id == id)
+        q = PostDb.query.filter_by(id = id)
         if q.first() != None:
             return True
         return False
 
 class Request:
-    def __init__(self):
-        self.session = None
-
-    @needSession(write = True)
     def Submit(self, data):
-        self.session.add(RequestDb(
+        newReq = RequestDb(
                 reference = data['reference'],
                 to_user = data['to_user'], 
                 from_user = data['from_user'], 
@@ -489,16 +435,17 @@ class Request:
                 total_price = data['total_price'], 
                 status = 'ready',
                 add_time = time.time(),
-                expire_time = time.time() + 600))
+                expire_time = time.time() + 600)
+        db.session.add(newReq)
+        db.session.commit()
         return True
 
-    @needSession(write = False)
     def Get(self, data):
         ret = []
         if data['direction'] == 'toMe':
-            result = self.session.query(RequestDb).filter(RequestDb.to_user == data['username']).order_by(RequestDb.add_time.desc()).slice(int(data['start']), int(data['end']))
+            result = RequestDb.query.filter_by(to_user = data['username']).order_by(RequestDb.add_time.desc()).slice(int(data['start']), int(data['end']))
         elif data['direction'] == 'fromMe':
-            result = self.session.query(RequestDb).filter(RequestDb.from_user == data['username']).order_by(RequestDb.add_time.desc()).slice(int(data['start']), int(data['end']))
+            result = RequestDb.query.filter_by(from_user = data['username']).order_by(RequestDb.add_time.desc()).slice(int(data['start']), int(data['end']))
         else:
             return []
         for row in result:
@@ -516,12 +463,11 @@ class Request:
             ret.append(temp)
         return ret
             
-    @needSession(write = True)
     def ChangeStatus(self, data):
-        q = self.session.query(RequestDb).filter(RequestDb.id == data['id'])
-        if q.first() == None:
+        q = RequestDb.query.get(data['id'])
+        if q == None:
             return 400, {'msg':'Wrong request ID'}
-        result = q.first().__dict__
+        result = q.__dict__
         status = result['status']
         toUser = result['to_user']
         fromUser = result['from_user']
@@ -532,26 +478,26 @@ class Request:
             if status == 'ready' and data['status'] == 'confirm':
                 p = Post()
                 if p.UpdateItem(reference, order):
-                    q.update({RequestDb.status: 'confirm'})
+                    q.status = 'confirm'
                 else:
                     return 400, {"msg": "Can not take this order"}
             elif status == 'ready' and data['status'] == 'decline':
-                q.update({RequestDb.status: 'decline'})
+                q.status = 'decline'
             else:
                 return 400, {"msg": "Invalid operation!"}
         elif fromUser == data['username']:
             if status == 'ready' and data['status'] == 'cancel':
-                q.update({RequestDb.status: 'cancel'})
+                q.status = 'cancel'
                 u = User(fromUser)
                 u.DoTransaction(trans="purchase", success=False)
             elif status == 'confirm' and data['status'] == 'finish':
-                q.update({RequestDb.status: 'finish'})
+                q.status = 'finish'
                 u = User(fromUser)
                 u.DoTransaction(trans="purchase", success=True)
                 u = User(toUser)
                 u.DoTransaction(trans="sell", success=True)
             elif status == 'confirm' and data['status'] == 'unfinish':
-                q.update({RequestDb.status: 'unfinish'})
+                q.status = 'unfinish'
                 u = User(toUser)
                 u.DoTransaction(trans="sell", success=False)
             else:
@@ -559,6 +505,7 @@ class Request:
         else:
             return 400, {"msg": "Invalid user!"}
 
+        db.session.commit()
         return 200, {"msg": "Success"}
 
 
