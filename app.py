@@ -59,7 +59,7 @@ class UserDb(db.Model):
     bad_sell        = db.Column(db.Integer, default=0)
     bad_purchase    = db.Column(db.Integer, default=0)
     grades          = db.Column(db.Integer, default=0)
-    level           = db.Column(db.Integer, default=0)
+    level           = db.Column(db.Integer, default=1)
     level_exp_time  = db.Column(db.Integer, default=0)
     cards           = db.Column(db.Text, default="{}")
     expire_time     = db.Column(db.Integer, default=0)
@@ -232,12 +232,19 @@ class User:
             d = {}
             if mine == True:
                 for key in ['email', 'cell', 'address', 'good_sell', 'bad_sell', \
-                        'good_purchase', 'bad_purchase', 'grades', 'cards', 'level']:
-                    d[key] = self[key]
+                        'good_purchase', 'bad_purchase', 'grades', 'cards', 'level', 'level_exp_time']:
+                    if key == 'level_exp_time':
+                        d[key] = int(self[key] - time.time())
+                    else:
+                        d[key] = self[key]
                 return 200, d
             else:
-                for key in ['good_sell', 'bad_sell', 'good_purchase', 'bad_purchase', 'grades', 'level']:
-                    d[key] = self[key]
+                for key in ['good_sell', 'bad_sell', 'good_purchase', 'bad_purchase', \
+                        'grades', 'level', 'level_exp_time']:
+                    if key == 'level_exp_time':
+                        d[key] = int(self[key] - time.time())
+                    else:
+                        d[key] = self[key]
                 return 200, d
         else:
             return 400, {'msg': 'No such user!'}
@@ -291,10 +298,10 @@ class User:
                     cards = self['cards']
                     if cardname in cards:
                         cards[cardname] += 1
-                        print cards
                     else:
                         cards[cardname] = 1
                     self['cards'] = cards
+                    self.data.grades = self.data.grades - cardData[cardname]["price"]
                     db.session.commit()
                     return 200, "Success!"
         else:
@@ -577,10 +584,7 @@ def MyInfo():
 def UserInfo():
     data = request.get_json()
     u = User(username = data['username'])
-    code, respJson = u.GetInfo(mine = False)
-    resp = flask.jsonify(respJson)
-    resp.status_code = code
-    return resp
+    return GetResp(u.GetInfo(mine = False))
 
 @app.route('/changepassword', methods=['POST'])
 @require("username", "old_password", "new_password")
