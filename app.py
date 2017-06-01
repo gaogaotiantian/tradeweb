@@ -215,7 +215,8 @@ class User:
             newUser = UserDb(username = username, 
                     password = hashlib.md5(password).hexdigest(),
                     token = token,
-                    email = email)
+                    email = email,
+                    expire_time = time.time() + 3600)
             db.session.add(newUser)
             db.session.commit()
             return 200, {"msg":"Success", "token":token}
