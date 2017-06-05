@@ -79,6 +79,7 @@ class PostDb(db.Model):
     items         = db.Column(db.Text, default="{}")
     availability  = db.Column(db.Text, default="{}")
     buff          = db.Column(db.Text, default="{}")
+    images        = db.Column(db.Text, default="[]")
     add_time      = db.Column(db.Integer)
     expire_time   = db.Column(db.Integer)
     update_time   = db.Column(db.Integer, default=0)
@@ -163,14 +164,16 @@ class User:
         if key == "cards":
             return json.loads(self.data.__getattribute__(key))
         elif key == 'post_gap':
-            if self.data.level == 0:
+            if self.data.level == 1:
                 return 24*3600
-            elif self.data.level == 1:
-                return 6*3600
             elif self.data.level == 2:
-                return 3*3600
+                return 6*3600
             elif self.data.level == 3:
+                return 3*3600
+            elif self.data.level == 4:
                 return 1*3600
+            else:
+                return 0
         elif key == 'pending_requests':
             num  = RequestDb.query.filter_by(from_user = self['username'], status = 'confirm').count()
             num += RequestDb.query.filter_by(to_user = self['username'], status = 'ready').count()
@@ -252,6 +255,9 @@ class User:
                         'level_exp_time', 'pending_requests']:
                     if key == 'level_exp_time':
                         d[key] = int(self[key] - time.time())
+                        if d[key] < 0:
+                            self['level'] = 1;
+                            db.session.commit()
                     else:
                         d[key] = self[key]
                 return 200, d
@@ -397,7 +403,8 @@ class Post:
                         author=data['author'], 
                         content=data['content'], 
                         items=json.dumps(data['items']), 
-                        availability=json.dumps(data['availability']), 
+                        availability=json.dumps(data['availability']),
+                        images=json.dumps(data['images']),
                         add_time=time.time(), 
                         expire_time=data['expire_time'])
                 db.session.add(p)
@@ -421,6 +428,7 @@ class Post:
             temp['items'] = json.loads(d['items'])
             temp['availability'] = json.loads(d['availability'])
             temp['buff'] = json.loads(d['buff'])
+            temp['images'] = json.loads(d['images'])
             temp['timeago'] = timeago.format(int(d['add_time']), locale='zh_CN')
             ret.append(temp)
         return ret
