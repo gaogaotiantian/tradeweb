@@ -419,7 +419,10 @@ class Post:
         if mine:
             result = PostDb.query.filter_by(author = data['username']).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
         else:
-            result = PostDb.query.filter_by(category = data['category'], is_deleted = False).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
+            if data['category'] == u'全部':
+                result = PostDb.query.filter_by(is_deleted = False).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
+            else:
+                result = PostDb.query.filter_by(category = data['category'], is_deleted = False).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
         for row in result:
             d = row.__dict__
             temp = {}
