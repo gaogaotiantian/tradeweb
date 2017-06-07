@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import functools
+import urllib
 
 # Helper lib from pip
 import timeago
@@ -25,6 +26,7 @@ if os.environ.get('DATABASE_URL') != None:
     DATABASE_URL = os.environ.get('DATABASE_URL')
 else:
     DATABASE_URL = "postgresql+psycopg2://gaotian:password@localhost:5432/tradeweb"
+CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 CORS(app)
@@ -33,16 +35,29 @@ db = SQLAlchemy(app)
 #                         Table-like Data
 # ============================================================================
 cardList = [
-    [u"小队长卡", 1, "变成小队长，发帖间隔6小时，学分收益加倍，每帖最多5项，有效期30天。"],
-    [u"中队长卡", 1, "变成中队长，发帖间隔3小时，学分收益三倍，每帖最多8项，有效期30天。"],
-    [u"大队长卡", 1, "变成大队长，发帖间隔1小时，学分收益四倍，每帖最多12项，有效期30天。"],
-    [u"加粗卡",   1, "把帖子标题加粗！"],
-    [u"变红卡",   1, "把帖子标题变红！"],
-    [u"变绿卡",   1, "把帖子标题变绿！"],
-    [u"变蓝卡",   1, "把帖子标题变蓝！"]
+    [u"小队长卡", 25, "变成小队长，发帖间隔6小时，学分收益加倍，每帖最多5项，有效期30天。"],
+    [u"中队长卡", 100, "变成中队长，发帖间隔3小时，学分收益三倍，每帖最多8项，有效期30天。"],
+    [u"大队长卡", 300, "变成大队长，发帖间隔1小时，学分收益四倍，每帖最多12项，有效期30天。"],
+    [u"三好学生卡", 500, "变成三好学生，发帖间隔30分钟，学分收益五倍，每帖最多17项，有效期30天。"],
+    [u"加粗卡",   15, "把帖子标题加粗！"],
+    [u"变红卡",   25, "把帖子标题变红！"],
+    [u"变绿卡",   25, "把帖子标题变绿！"],
+    [u"变蓝卡",   25, "把帖子标题变蓝！"]
 ]
 
 cardData = {card[0]:{"price":card[1], "description":card[2]} for card in cardList}
+
+levelStatsRaw = [
+#   
+    [0,   0,  0],
+    [24,  1,  3],
+    [6,   2,  5],
+    [3,   3,  8],
+    [1,   4, 12],
+    [0.5, 5, 17]
+]
+
+levelStat = [{"post_gap":l[0], "benefit":l[1], "post_limit":l[2]} for l in levelStatsRaw]
 
 # ============================================================================
 #                                Classes 
@@ -63,8 +78,8 @@ class UserDb(db.Model):
     bad_sell        = db.Column(db.Integer, default=0)
     bad_purchase    = db.Column(db.Integer, default=0)
     grades          = db.Column(db.Integer, default=0)
-    level           = db.Column(db.Integer, default=1)
-    level_exp_time  = db.Column(db.Integer, default=0)
+    level           = db.Column(db.Integer, default=3)
+    level_exp_time  = db.Column(db.Integer, default=1498867200)
     cards           = db.Column(db.Text, default="{}")
     expire_time     = db.Column(db.Integer, default=0)
     update_time     = db.Column(db.Integer, default=0)
@@ -164,14 +179,8 @@ class User:
         if key == "cards":
             return json.loads(self.data.__getattribute__(key))
         elif key == 'post_gap':
-            if self.data.level == 1:
-                return 24*3600
-            elif self.data.level == 2:
-                return 6*3600
-            elif self.data.level == 3:
-                return 3*3600
-            elif self.data.level == 4:
-                return 1*3600
+            if 1 <= self.data.level <= 5:
+                return levelStat[self.data.level]['post_gap']*3600
             else:
                 return 0
         elif key == 'pending_requests':
@@ -255,7 +264,7 @@ class User:
                         'level_exp_time', 'pending_requests']:
                     if key == 'level_exp_time':
                         d[key] = int(self[key] - time.time())
-                        if d[key] < 0:
+                        if d[key] < 0 and self['level'] > 1:
                             self['level'] = 1;
                             db.session.commit()
                     else:
@@ -266,6 +275,9 @@ class User:
                         'grades', 'level', 'level_exp_time']:
                     if key == 'level_exp_time':
                         d[key] = int(self[key] - time.time())
+                        if d[key] < 0 and self['level'] > 1:
+                            self['level'] = 1;
+                            db.session.commit()
                     else:
                         d[key] = self[key]
                 return 200, d
@@ -295,13 +307,13 @@ class User:
             if trans == "sell":
                 if success:
                     self.data.good_sell = self.data.good_sell + 1
-                    self.data.grades = self.data.grades + self.data.level
+                    self.AddGrade(5)
                 else:
                     self.data.bad_sell = self.data.bad_sell + 1
             elif trans == "purchase":
                 if success:
                     self.data.good_purchase = self.data.good_purchase + 1
-                    self.data.grades = self.data.grades + self.data.level
+                    self.AddGrade(5)
                 else:
                     self.data.bad_purchase = self.data.bad_purchase + 1
             else:
@@ -384,6 +396,9 @@ class User:
         else:
             return 401, {"msg":"需要先登录再操作！"}
 
+    def AddGrade(self, grade):
+        self['grades'] = self['grades'] + self['level'] * grade
+        db.session.commit()
 
 
 class Post:
@@ -409,6 +424,7 @@ class Post:
                         expire_time=data['expire_time'])
                 db.session.add(p)
                 db.session.commit()
+                u.AddGrade(1)
                 return 200, {"msg": "Success!"}
             else:
                 return 400, {"msg": "您的用户级别发帖间隔为{}秒, 您还需要等待{}秒".format(u['post_gap'], int(u['post_gap'] - (time.time() - q.first().__dict__['add_time'])))}
@@ -749,6 +765,29 @@ def ChangeRequestStatus():
     status_code, msg = r.ChangeStatus(data)
     resp = flask.jsonify(msg)
     resp.status_code = status_code 
+    return resp
+
+@app.route('/signature', methods=['POST'])
+def Signature():
+    if CLOUDINARY_API_SECRET != None:
+        data = request.get_json()
+        for pickOutKey in ['file', 'type', 'resource_type', 'api_key']:
+            if pickOutKey in data:
+                data.pop(pickOutKey)
+        s = '&'.join([str(t[0])+'='+str(t[1]) for t in sorted([(k, v) for k,v in data.items()])])
+        s += CLOUDINARY_API_SECRET
+        resp = flask.jsonify({"signature": hashlib.sha1(s).hexdigest()})
+        resp.status_code = 200
+    else:
+        resp = flask.jsonify({"msg": "No valid cloudinary api secret exist"})
+        resp.status_code = 403
+
+    return resp
+    
+@app.route('/levelStat', methods=['POST'])
+def LevelStat():
+    resp = flask.jsonify(levelStat)
+    resp.status_code = 200
     return resp
 
 if __name__ == "__main__":
