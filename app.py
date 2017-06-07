@@ -493,6 +493,8 @@ class Post:
         if q.first() != None:
             q.first().is_deleted = True
             db.session.commit()
+            u = User(author)
+            u.AddGrade(-1)
             return True
         return False
     
