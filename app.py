@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import functools
+import urllib
 
 # Helper lib from pip
 import timeago
@@ -25,6 +26,7 @@ if os.environ.get('DATABASE_URL') != None:
     DATABASE_URL = os.environ.get('DATABASE_URL')
 else:
     DATABASE_URL = "postgresql+psycopg2://gaotian:password@localhost:5432/tradeweb"
+CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 CORS(app)
@@ -43,6 +45,17 @@ cardList = [
 ]
 
 cardData = {card[0]:{"price":card[1], "description":card[2]} for card in cardList}
+
+levelStatsRaw = [
+#   
+    [0,  0,  0],
+    [24, 1,  3],
+    [6,  2,  5],
+    [3,  3,  8],
+    [1,  4, 12]
+]
+
+levelStat = [{"post_gap":l[0], "benefit":l[1], "post_limit":l[2]} for l in levelStatsRaw]
 
 # ============================================================================
 #                                Classes 
@@ -164,14 +177,8 @@ class User:
         if key == "cards":
             return json.loads(self.data.__getattribute__(key))
         elif key == 'post_gap':
-            if self.data.level == 1:
-                return 24*3600
-            elif self.data.level == 2:
-                return 6*3600
-            elif self.data.level == 3:
-                return 3*3600
-            elif self.data.level == 4:
-                return 1*3600
+            if 1 <= self.data.level <= 4:
+                return levelStat[self.data.level]['post_gap']*3600
             else:
                 return 0
         elif key == 'pending_requests':
@@ -749,6 +756,29 @@ def ChangeRequestStatus():
     status_code, msg = r.ChangeStatus(data)
     resp = flask.jsonify(msg)
     resp.status_code = status_code 
+    return resp
+
+@app.route('/signature', methods=['POST'])
+def Signature():
+    if CLOUDINARY_API_SECRET != None:
+        data = request.get_json()
+        for pickOutKey in ['file', 'type', 'resource_type', 'api_key']:
+            if pickOutKey in data:
+                data.pop(pickOutKey)
+        s = '&'.join([str(t[0])+'='+str(t[1]) for t in sorted([(k, v) for k,v in data.items()])])
+        s += CLOUDINARY_API_SECRET
+        resp = flask.jsonify({"signature": hashlib.sha1(s).hexdigest()})
+        resp.status_code = 200
+    else:
+        resp = flask.jsonify({"msg": "No valid cloudinary api secret exist"})
+        resp.status_code = 403
+
+    return resp
+    
+@app.route('/levelStat', methods=['POST'])
+def LevelStat():
+    resp = flask.jsonify(levelStat)
+    resp.status_code = 200
     return resp
 
 if __name__ == "__main__":
