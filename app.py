@@ -20,6 +20,7 @@ from flask import Flask, request, render_template
 from flask_login import LoginManager
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
+from flask_mail import Mail, Message
 
 # Initialization
 if os.environ.get('DATABASE_URL') != None:
@@ -29,8 +30,15 @@ else:
 CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+app.config['MAIL_SERVER'] = 'smtp.gmail.com'
+app.config['MAIL_PORT'] = 465
+app.config['MAIL_USERNAME'] = os.environ.get('EMAIL_USERNAME')
+app.config['MAIL_PASSWORD'] = os.environ.get('EMAIL_PASSWORD')
+app.config['MAIL_USE_TLS'] = False
+app.config['MAIL_USE_SSL'] = True
 CORS(app)
 db = SQLAlchemy(app)
+mail = Mail(app)
 # ============================================================================
 #                         Table-like Data
 # ============================================================================
@@ -231,6 +239,9 @@ class User:
                     expire_time = time.time() + 3600)
             db.session.add(newUser)
             db.session.commit()
+            msg = Message('欢迎来到学子集！', sender = app.config['MAIL_USERNAME'], recipients = [email])
+            msg.body = '在学子集，我们希望您可以诚信交易，尊重他人，利用好这个工具。祝愿您在学子集玩的愉快：）'
+            mail.send(msg)
             return 200, {"msg":"Success", "token":token}
         return 400, {"msg":"用户名已被占用"}
 
@@ -464,8 +475,6 @@ class Post:
             avai = json.loads(q.__dict__['availability'])
             for key in order:
                 if key in avai:
-                    print avai
-                    print avai[key], order[key][1]
                     avai[key] = int(avai[key]) - int(order[key][1])
                     if avai[key] < 0: 
                         return False
@@ -519,6 +528,16 @@ class Request:
                 expire_time = time.time() + 600)
         db.session.add(newReq)
         db.session.commit()
+        u = User(data['to_user'])
+        p = Post(data['reference'])
+        msg = Message(u'《{}》有新的订单了！'.format(p.data.title), sender = app.config['MAIL_USERNAME'], recipients = [u['email']])
+        msg.html  = u'<p>赶紧去<a href="https://www.xueziji.com">学子集</a>看看吧！请在联系买家后尽快确认订单哟！</p>'
+        msg.html += u'<p>订单详情：</p>'
+        for name, od in data['order'].items():
+            msg.html += u'<p>{}: ${}x{}</p>'.format(name, od[0], od[1])
+        msg.html += u'<p>总价：${}</p>'.format(data['total_price'])
+
+        mail.send(msg)
         return True
 
     def Get(self, data):
@@ -555,32 +574,50 @@ class Request:
         order  = json.loads(result['order'])
         reference = result['reference']
 
+        p = Post()
+        title = p.GetByRef(reference)['title']
         if toUser == data['username']:
+            u = User(fromUser)
+            msg = Message('订单更新情况！', sender = app.config['MAIL_USERNAME'], recipients = [u['email']])
             if status == 'ready' and data['status'] == 'confirm':
-                p = Post()
                 if p.UpdateItem(reference, order):
                     q.status = 'confirm'
+                    msg.html = u'您对《{}》的订单已经被确认！请等待卖家联系您，不要忘了在交易完成之后点完成按钮哟！去<a href="https://www.xueziji.com">学子集</a>看看吧！'.format(title)
                 else:
                     return 400, {"msg": "Can not take this order"}
             elif status == 'ready' and data['status'] == 'decline':
                 q.status = 'decline'
+                msg.html = u'您对《{}》的订单已经被拒绝。请查看自己的联系方式是否没有填写或填写错误导致卖家无法联系您。去<a href="https://www.xueziji.com">学子集</a>看看吧！'.format(title)
             else:
                 return 400, {"msg": "Invalid operation!"}
+            mail.send(msg)
         elif fromUser == data['username']:
+            u = User(toUser)
+            msg = Message('订单更新情况！', sender = app.config['MAIL_USERNAME'], recipients = [u['email']])
             if status == 'ready' and data['status'] == 'cancel':
                 q.status = 'cancel'
                 u = User(fromUser)
                 u.DoTransaction(trans="purchase", success=False)
+                msg.body = u'您的《{}》来自 {} 的订单已经被取消。'.format(title, fromUser)
+                mail.send(msg)
             elif status == 'confirm' and data['status'] == 'finish':
                 q.status = 'finish'
                 u = User(fromUser)
                 u.DoTransaction(trans="purchase", success=True)
+                msg = Message('订单更新情况！', sender = app.config['MAIL_USERNAME'], recipients = [u['email']])
+                msg.html = u'恭喜！您的《{}》订单已经完成。学分又涨了哟！有机会可以试试各种卡片了！去<a href="https://www.xueziji.com">学子集</a>看看吧！'.format(title)
+                mail.send(msg)
                 u = User(toUser)
                 u.DoTransaction(trans="sell", success=True)
+                msg = Message('订单更新情况！', sender = app.config['MAIL_USERNAME'], recipients = [u['email']])
+                msg.html = u'恭喜！您的《{}》订单已经完成。学分又涨了哟！有机会可以试试各种卡片了！去<a href="https://www.xueziji.com">学子集</a>看看吧！'.format(title)
+                mail.send(msg)
             elif status == 'confirm' and data['status'] == 'unfinish':
                 q.status = 'unfinish'
                 u = User(toUser)
                 u.DoTransaction(trans="sell", success=False)
+                msg.body = u'您的《{}》与{}的交易失败。如果交易成功进行了，请联系网站管理员。'.format(title, fromUser)
+                mail.send(msg)
             else:
                 return 400, {"msg": "Invalid operation"}
         else:
