@@ -422,7 +422,7 @@ class Post:
     def Submit(self, data):
         u = User(username = data['author'], token = data['token'])
         if u.valid:
-            q = PostDb.query.filter_by(author = data['author']).order_by(PostDb.add_time.desc())
+            q = PostDb.query.filter_by(author = data['author'], is_deleted = False).order_by(PostDb.add_time.desc())
             if q.first() == None or q.first().__dict__['add_time'] < time.time() - u['post_gap']:
                 p = PostDb(category = data['category'], 
                         title=data['title'], 
