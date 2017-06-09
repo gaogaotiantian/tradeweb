@@ -442,14 +442,17 @@ class Post:
         return 400, {"msg": "用户失效！"}
     
     def Get(self, data, mine = False):
-        ret = []
+        ret = {}
+        ret['posts'] = []
         if mine:
             result = PostDb.query.filter_by(author = data['username']).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
         else:
             if data['category'] == u'全部':
                 result = PostDb.query.filter_by(is_deleted = False).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
+                ret['count'] = PostDb.query.filter_by(is_deleted = False).count()
             else:
                 result = PostDb.query.filter_by(category = data['category'], is_deleted = False).order_by(PostDb.add_time.desc()).slice(int(data['start']), int(data['end']))
+                ret['count'] = PostDb.query.filter_by(category = data['category'], is_deleted = False).count()
         for row in result:
             d = row.__dict__
             temp = {}
@@ -460,7 +463,7 @@ class Post:
             temp['buff'] = json.loads(d['buff'])
             temp['images'] = json.loads(d['images'])
             temp['timeago'] = timeago.format(int(d['add_time']), locale='zh_CN')
-            ret.append(temp)
+            ret['posts'].append(temp)
         return ret
 
     def GetByRef(self, postid):
@@ -543,11 +546,14 @@ class Request:
         return True
 
     def Get(self, data):
-        ret = []
+        ret = {}
+        ret['orders'] = []
         if data['direction'] == 'toMe':
             result = RequestDb.query.filter_by(to_user = data['username']).order_by(RequestDb.add_time.desc()).slice(int(data['start']), int(data['end']))
+            ret['count'] = RequestDb.query.filter_by(to_user = data['username']).count()
         elif data['direction'] == 'fromMe':
             result = RequestDb.query.filter_by(from_user = data['username']).order_by(RequestDb.add_time.desc()).slice(int(data['start']), int(data['end']))
+            ret['count'] = RequestDb.query.filter_by(from_user = data['username']).count()
         else:
             return []
         for row in result:
@@ -562,7 +568,7 @@ class Request:
                 else:
                     temp[k] = d[k]
             temp['timeago'] = timeago.format(int(d['add_time']), locale='zh_CN')
-            ret.append(temp)
+            ret['orders'].append(temp)
         return ret
             
     def ChangeStatus(self, data):
